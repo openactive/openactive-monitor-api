@@ -1,5 +1,7 @@
 using Google.Cloud.BigQuery.V2;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using System.ComponentModel.DataAnnotations;
 
@@ -7,46 +9,119 @@ namespace MonitorApi.Controllers;
 
 [Route("/")]
 [ApiController]
-public class ApiController(IOptions<BigQueryOptions> options) : ControllerBase
+public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOptions> apiOptions, IMemoryCache cache) : ControllerBase, IActionFilter
 {
+	private const string SummaryCacheKey = "summary";
+	private static readonly TimeSpan SummaryCacheTtl = TimeSpan.FromHours(1);
+
 	protected BigQueryOptions options = options.Value;
+	protected ApiOptions apiOptions = apiOptions.Value;
+	protected IMemoryCache cache = cache;
+
+	public void OnActionExecuting(ActionExecutingContext context)
+	{
+		// All services are protected by a simple access token for now, to prevent abuse. The token is passed as a query parameter.
+		var token = context.HttpContext.Request.Query["token"].ToString();
+		if (token != apiOptions.AccessToken)
+		{
+			context.Result = new ObjectResult(new { message = "Please provide a valid token." })
+			{
+				StatusCode = StatusCodes.Status403Forbidden,
+			};
+		}
+	}
+
+	public void OnActionExecuted(ActionExecutedContext context)
+	{
+	}
 
 	#region Endpoints
 
 	[HttpGet("opportunities")]
-	public Task<object> Opportunities() => Execute(
-"""
-SELECT *
-FROM openactive-monitor.openactive_analytics.active_opportunities_summary
-LIMIT 1000
-"""
-);
+	public Task<object> Opportunities(string? publisher = null, string? district = null)
+	{
+		var conditions = new List<string>();
+		var parameters = new List<BigQueryParameter>();
 
-	[HttpGet("opportunities_over")]
-	public Task<object> OpportunitiesByProvider([Required] int rows) => Execute(
-		"""
-SELECT *
-FROM openactive-monitor.openactive_analytics.active_opportunities_summary
-WHERE row_count > @rows
-LIMIT 1000
-""",
-		new BigQueryParameter("rows", BigQueryDbType.Int64, rows)
-	);
+		if (!string.IsNullOrWhiteSpace(publisher))
+		{
+			conditions.Add("publisher = @publisher");
+			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
+		}
 
-	[HttpGet("opportunities_by_provider")]
-	public Task<object> OpportunitiesByProvider(string provider) => Execute(
-		"""
-SELECT *
-FROM openactive-monitor.openactive_analytics.active_opportunities_summary
-WHERE provider = @provider
-LIMIT 1000
-""",
-		new BigQueryParameter("provider", BigQueryDbType.String, provider)
-	);
+		if (!string.IsNullOrWhiteSpace(district))
+		{
+			conditions.Add("district_name = @district");
+			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+		}
+
+		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
+
+		return Execute(
+			$"""
+			SELECT *
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+			{where}
+			LIMIT 1000
+			""",
+			parameters
+		);
+	}
+
+	[HttpGet("summary")]
+	public async Task<IActionResult> Summary()
+	{
+		// Cache the summary for one hour
+		var payload = await cache.GetOrCreateAsync(SummaryCacheKey, async entry =>
+		{
+			entry.AbsoluteExpirationRelativeToNow = SummaryCacheTtl;
+
+			var insightRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+				$"""
+				SELECT total_num_future_opportunity_items AS n, run_date
+				FROM {Fq(Tables.InsightRunSummary)}
+				ORDER BY run_date DESC
+				LIMIT 1
+				"""
+			);
+			var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+				$"""
+				SELECT COUNT(DISTINCT dataset_url) AS n
+				FROM {Fq(Tables.Feeds)}
+				"""
+			);
+			var activityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+				$"""
+				SELECT COUNT(DISTINCT JSON_VALUE(a)) AS n
+				FROM {Fq(Tables.Opportunities)} AS o,
+				     UNNEST(JSON_EXTRACT_ARRAY(o.activity)) AS a
+				WHERE JSON_VALUE(a) IS NOT NULL
+				"""
+			);
+
+			var insight = await insightRows.FirstAsync();
+			var publishers = await publisherRows.FirstAsync();
+			var activities = await activityRows.FirstAsync();
+
+			return (object)new
+			{
+				number_of_opportunities = insight["n"],
+				number_of_publishers = publishers["n"],
+				number_of_activities = activities["n"],
+				percentage_of_local_authorities = 74,
+				number_of_activity_providers = 4885,
+				date = insight["run_date"],
+			};
+		});
+
+		return Ok(payload);
+	}
 
 	#endregion
 
 	#region Utilities
+
+	private string Fq(string table) => $"`{options.ProjectId}.{options.DatasetId}.{table}`";
 
 	async private Task<object> Execute(string query, params IEnumerable<BigQueryParameter> parameters)
 	{

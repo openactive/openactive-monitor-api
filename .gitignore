@@ -1,4 +1,7 @@
-﻿/.vs
+﻿openactive-monitor-*.json
+appsettings.Development.json
+
+/.vs
 /bin
 /obj
 *.user
