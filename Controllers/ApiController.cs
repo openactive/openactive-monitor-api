@@ -7,6 +7,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace MonitorApi.Controllers;
 
+/// <summary>
+/// OpenActive monitor API. Every endpoint requires a valid access token supplied as the <c>token</c> query parameter;
+/// requests with a missing or incorrect token receive HTTP 403.
+/// </summary>
 [Route("/")]
 [ApiController]
 public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOptions> apiOptions, IMemoryCache cache) : ControllerBase, IActionFilter
@@ -37,8 +41,20 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 	#region Endpoints
 
+	/// <summary>
+	/// Returns active opportunities, optionally narrowed by publisher, location, and activity/facility type.
+	/// </summary>
+	/// <remarks>
+	/// When no parameters are supplied, all results are returned unfiltered.
+	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
+	/// </remarks>
+	/// <param name="publisher">Exact publisher name to match.</param>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	/// <param name="activity">Activity or facility label.</param>
 	[HttpGet("opportunities")]
-	public Task<object> Opportunities(string? publisher = null, string? district = null)
+	public Task<object> Opportunities(string? publisher = null, string? district = null, string? region = null, string? country = null, string? activity = null)
 	{
 		var conditions = new List<string>();
 		var parameters = new List<BigQueryParameter>();
@@ -51,8 +67,26 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 		if (!string.IsNullOrWhiteSpace(district))
 		{
-			conditions.Add("district_name = @district");
+			conditions.Add("district_code = @district");
 			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+		}
+
+		if (!string.IsNullOrWhiteSpace(region))
+		{
+			conditions.Add("region_code = @region");
+			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
+		}
+
+		if (!string.IsNullOrWhiteSpace(country))
+		{
+			conditions.Add("country_code = @country");
+			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+		}
+
+		if (!string.IsNullOrWhiteSpace(activity))
+		{
+			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
+			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
 		}
 
 		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
@@ -62,12 +96,17 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			SELECT *
 			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			{where}
-			LIMIT 1000
 			""",
 			parameters
 		);
 	}
 
+	/// <summary>
+	/// Returns aggregate metrics across all opportunities (counts of opportunities, publishers, and activities).
+	/// </summary>
+	/// <remarks>
+	/// The result is cached for one hour; the first request after expiry re-runs the underlying BigQuery queries.
+	/// </remarks>
 	[HttpGet("summary")]
 	public async Task<IActionResult> Summary()
 	{
