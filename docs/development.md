@@ -41,6 +41,11 @@ Once the application is running, the following endpoints will be available:
 
 ```text
 http://localhost:5268/summary?token=
+http://localhost:5268/areas?token=
+http://localhost:5268/publishers?token=
+http://localhost:5268/publishers?district=E09000003&token=
+http://localhost:5268/activities?token=
+http://localhost:5268/activities?region=E12000007&token=
 http://localhost:5268/opportunities?token=
 http://localhost:5268/opportunities?publisher=Ashmole%20Trust&token=
 http://localhost:5268/opportunities?district=E09000003&token=
@@ -58,7 +63,31 @@ http://localhost:5268/opportunities?activity=Yoga&token=
 | `country`   | `country_code`                                   |
 | `activity`  | value present in the `activity_or_facility` JSON array |
 
+`/publishers` returns all distinct publisher names in alphabetical order, accepting the optional `district`, `region`, and `country` filters (same column mapping as `/opportunities`, AND-combined).
+
+`/activities` returns every distinct activity/facility value (flattened from the `activity_or_facility` JSON array) in alphabetical order, accepting the same optional `district`, `region`, and `country` filters.
+
 `/summary` returns aggregate metrics and is cached for one hour.
+
+`/areas` returns the location hierarchy (country → regions → districts), keyed by name. Districts with a null region are listed directly on the country under a `districts` key:
+
+```json
+{
+  "England": {
+    "country_code": "E92000001",
+    "regions": [
+      {
+        "London": {
+          "region_code": "E12000007",
+          "districts": [
+            { "district_name": "Barnet", "district_code": "E09000003" }
+          ]
+        }
+      }
+    ]
+  }
+}
+```
 
 ## Deployment
 

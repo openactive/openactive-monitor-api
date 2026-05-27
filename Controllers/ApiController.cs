@@ -156,6 +156,204 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		return Ok(payload);
 	}
 
+	/// <summary>
+	/// Returns the full location hierarchy (country → regions → districts) derived from the opportunities data.
+	/// In Northern Ireland, Wales and Scotland, where there are no regions, districts are attached directly to the country (country → districts); in other countries, districts are grouped under their respective regions.
+	/// </summary>
+	/// <remarks>
+	/// The response is keyed by country name; each country carries its <c>country_code</c> and a list of regions,
+	/// each region (keyed by region name) carries its <c>region_code</c> and a list of <c>{ district_name, district_code }</c> entries.
+	/// Districts whose region is null are attached directly to the country under a <c>districts</c> list.
+	/// </remarks>
+	[HttpGet("areas")]
+	public async Task<IActionResult> Areas()
+	{
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT DISTINCT country_name, country_code, region_name, region_code, district_name, district_code
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+			WHERE country_name IS NOT NULL AND district_name IS NOT NULL
+			"""
+		);
+
+		var countryCodes = new Dictionary<string, string?>();
+		var regionsByCountry = new Dictionary<string, HashSet<string>>();
+		var regionCodes = new Dictionary<(string Country, string Region), string?>();
+		var districtsByRegion = new Dictionary<(string Country, string Region), List<(string Name, string? Code)>>();
+		var districtsByCountry = new Dictionary<string, List<(string Name, string? Code)>>();
+
+		await foreach (var row in rows)
+		{
+			var country = (string)row["country_name"];
+			var region = row.GetValueOrDefault("region_name") as string;
+			var district = ((string)row["district_name"], row.GetValueOrDefault("district_code") as string);
+
+			if (!countryCodes.ContainsKey(country))
+			{
+				countryCodes[country] = row.GetValueOrDefault("country_code") as string;
+				regionsByCountry[country] = new HashSet<string>();
+				districtsByCountry[country] = new List<(string, string?)>();
+			}
+
+			if (string.IsNullOrWhiteSpace(region))
+			{
+				districtsByCountry[country].Add(district);
+				continue;
+			}
+
+			var key = (country, region);
+			if (!regionCodes.ContainsKey(key))
+			{
+				regionsByCountry[country].Add(region);
+				regionCodes[key] = row.GetValueOrDefault("region_code") as string;
+				districtsByRegion[key] = new List<(string, string?)>();
+			}
+
+			districtsByRegion[key].Add(district);
+		}
+
+		static IEnumerable<object> SortedDistricts(List<(string Name, string? Code)> list) =>
+			list.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+				.Select(d => new { district_name = d.Name, district_code = d.Code });
+
+		var result = new Dictionary<string, object>();
+		foreach (var country in countryCodes.Keys.OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
+		{
+			var regions = new List<object>();
+			foreach (var region in regionsByCountry[country].OrderBy(r => r, StringComparer.OrdinalIgnoreCase))
+			{
+				var key = (country, region);
+				regions.Add(new Dictionary<string, object>
+				{
+					[region] = new
+					{
+						region_code = regionCodes[key],
+						districts = SortedDistricts(districtsByRegion[key]),
+					},
+				});
+			}
+
+			var countryNode = new Dictionary<string, object?>
+			{
+				["country_code"] = countryCodes[country],
+				["regions"] = regions,
+			};
+
+			if (districtsByCountry[country].Count > 0)
+			{
+				countryNode["districts"] = SortedDistricts(districtsByCountry[country]);
+				countryNode.Remove("regions");
+			}
+
+			result[country] = countryNode;
+		}
+
+		return Ok(result);
+	}
+
+	/// <summary>
+	/// Returns all distinct publisher names in alphabetical order, optionally narrowed by location.
+	/// </summary>
+	/// <remarks>
+	/// When no parameters are supplied, every publisher is returned.
+	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
+	/// </remarks>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	[HttpGet("publishers")]
+	public async Task<IActionResult> Publishers(string? district = null, string? region = null, string? country = null)
+	{
+		var conditions = new List<string> { "publisher IS NOT NULL" };
+		var parameters = new List<BigQueryParameter>();
+
+		if (!string.IsNullOrWhiteSpace(district))
+		{
+			conditions.Add("district_code = @district");
+			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+		}
+
+		if (!string.IsNullOrWhiteSpace(region))
+		{
+			conditions.Add("region_code = @region");
+			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
+		}
+
+		if (!string.IsNullOrWhiteSpace(country))
+		{
+			conditions.Add("country_code = @country");
+			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+		}
+
+		var where = "WHERE " + string.Join(" AND ", conditions);
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT DISTINCT publisher
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+			{where}
+			""",
+			parameters
+		);
+
+		var publishers = await rows.Select(r => (string)r["publisher"]).ToListAsync();
+		publishers.Sort(StringComparer.OrdinalIgnoreCase);
+
+		return Ok(publishers);
+	}
+
+	/// <summary>
+	/// Returns every distinct activity/facility value (flattened from the <c>activity_or_facility</c> JSON array) in alphabetical order, optionally narrowed by location.
+	/// </summary>
+	/// <remarks>
+	/// When no parameters are supplied, every activity is returned.
+	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
+	/// </remarks>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	[HttpGet("activities")]
+	public async Task<IActionResult> Activities(string? district = null, string? region = null, string? country = null)
+	{
+		var conditions = new List<string> { "JSON_VALUE(a) IS NOT NULL" };
+		var parameters = new List<BigQueryParameter>();
+
+		if (!string.IsNullOrWhiteSpace(district))
+		{
+			conditions.Add("district_code = @district");
+			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+		}
+
+		if (!string.IsNullOrWhiteSpace(region))
+		{
+			conditions.Add("region_code = @region");
+			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
+		}
+
+		if (!string.IsNullOrWhiteSpace(country))
+		{
+			conditions.Add("country_code = @country");
+			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+		}
+
+		var where = "WHERE " + string.Join(" AND ", conditions);
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT DISTINCT JSON_VALUE(a) AS activity
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o,
+			     UNNEST(JSON_EXTRACT_ARRAY(o.activity_or_facility)) AS a
+			{where}
+			""",
+			parameters
+		);
+
+		var activities = await rows.Select(r => (string)r["activity"]).ToListAsync();
+		activities.Sort(StringComparer.OrdinalIgnoreCase);
+
+		return Ok(activities);
+	}
+
 	#endregion
 
 	#region Utilities
