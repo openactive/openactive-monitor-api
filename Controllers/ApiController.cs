@@ -277,16 +277,23 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// When no parameters are supplied, every activity is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
+	/// <param name="publisher">Exact publisher name to match.</param>
 	/// <param name="district">Local authority district (LAD) code to match.</param>
 	/// <param name="region">Region code to match.</param>
 	/// <param name="country">Country code to match.</param>
 	[HttpGet("activities")]
-	public async Task<IActionResult> Activities(string? district = null, string? region = null, string? country = null)
+	public async Task<IActionResult> Activities(string? publisher = null, string? district = null, string? region = null, string? country = null)
 	{
 		var conditions = new List<string> { "JSON_VALUE(a) IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
 
 		AddLocationFilters(conditions, parameters, district, region, country);
+
+		if (!string.IsNullOrWhiteSpace(publisher))
+		{
+			conditions.Add("publisher = @publisher");
+			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
+		}
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
