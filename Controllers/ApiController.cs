@@ -42,66 +42,6 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	#region Endpoints
 
 	/// <summary>
-	/// Returns active opportunities, optionally narrowed by publisher, location, and activity/facility type.
-	/// </summary>
-	/// <remarks>
-	/// When no parameters are supplied, all results are returned unfiltered.
-	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
-	/// </remarks>
-	/// <param name="publisher">Exact publisher name to match.</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
-	/// <param name="activity">Activity or facility label.</param>
-	[HttpGet("opportunities")]
-	public Task<object> Opportunities(string? publisher = null, string? district = null, string? region = null, string? country = null, string? activity = null)
-	{
-		var conditions = new List<string>();
-		var parameters = new List<BigQueryParameter>();
-
-		if (!string.IsNullOrWhiteSpace(publisher))
-		{
-			conditions.Add("publisher = @publisher");
-			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
-		}
-
-		if (!string.IsNullOrWhiteSpace(district))
-		{
-			conditions.Add("district_code = @district");
-			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
-		}
-
-		if (!string.IsNullOrWhiteSpace(region))
-		{
-			conditions.Add("region_code = @region");
-			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
-		}
-
-		if (!string.IsNullOrWhiteSpace(country))
-		{
-			conditions.Add("country_code = @country");
-			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
-		}
-
-		if (!string.IsNullOrWhiteSpace(activity))
-		{
-			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
-			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
-		}
-
-		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
-
-		return Execute(
-			$"""
-			SELECT *
-			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
-			{where}
-			""",
-			parameters
-		);
-	}
-
-	/// <summary>
 	/// Returns aggregate metrics across all opportunities (counts of opportunities, publishers, and activities).
 	/// </summary>
 	/// <remarks>
@@ -154,6 +94,50 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		});
 
 		return Ok(payload);
+	}
+
+	/// <summary>
+	/// Returns active opportunities, optionally narrowed by publisher, location, and activity/facility type.
+	/// </summary>
+	/// <remarks>
+	/// When no parameters are supplied, all results are returned unfiltered.
+	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
+	/// </remarks>
+	/// <param name="publisher">Exact publisher name to match.</param>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	/// <param name="activity">Activity or facility label.</param>
+	[HttpGet("opportunities")]
+	public Task<object> Opportunities(string? publisher = null, string? district = null, string? region = null, string? country = null, string? activity = null)
+	{
+		var conditions = new List<string>();
+		var parameters = new List<BigQueryParameter>();
+
+		AddLocationFilters(conditions, parameters, district, region, country);
+
+		if (!string.IsNullOrWhiteSpace(publisher))
+		{
+			conditions.Add("publisher = @publisher");
+			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
+		}
+
+		if (!string.IsNullOrWhiteSpace(activity))
+		{
+			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
+			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
+		}
+
+		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
+
+		return Execute(
+			$"""
+			SELECT *
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+			{where}
+			""",
+			parameters
+		);
 	}
 
 	/// <summary>
@@ -267,23 +251,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		var conditions = new List<string> { "publisher IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
 
-		if (!string.IsNullOrWhiteSpace(district))
-		{
-			conditions.Add("district_code = @district");
-			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
-		}
-
-		if (!string.IsNullOrWhiteSpace(region))
-		{
-			conditions.Add("region_code = @region");
-			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
-		}
-
-		if (!string.IsNullOrWhiteSpace(country))
-		{
-			conditions.Add("country_code = @country");
-			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
-		}
+		AddLocationFilters(conditions, parameters, district, region, country);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -318,23 +286,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		var conditions = new List<string> { "JSON_VALUE(a) IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
 
-		if (!string.IsNullOrWhiteSpace(district))
-		{
-			conditions.Add("district_code = @district");
-			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
-		}
-
-		if (!string.IsNullOrWhiteSpace(region))
-		{
-			conditions.Add("region_code = @region");
-			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
-		}
-
-		if (!string.IsNullOrWhiteSpace(country))
-		{
-			conditions.Add("country_code = @country");
-			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
-		}
+		AddLocationFilters(conditions, parameters, district, region, country);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -357,6 +309,27 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	#endregion
 
 	#region Utilities
+
+	private static void AddLocationFilters(List<string> conditions, List<BigQueryParameter> parameters, string? district, string? region, string? country)
+	{
+		if (!string.IsNullOrWhiteSpace(district))
+		{
+			conditions.Add("district_code = @district");
+			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+		}
+
+		if (!string.IsNullOrWhiteSpace(region))
+		{
+			conditions.Add("region_code = @region");
+			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
+		}
+
+		if (!string.IsNullOrWhiteSpace(country))
+		{
+			conditions.Add("country_code = @country");
+			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+		}
+	}
 
 	private string Fq(string table) => $"`{options.ProjectId}.{options.DatasetId}.{table}`";
 
