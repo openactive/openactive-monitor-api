@@ -14,7 +14,7 @@ All data is read from configured BigQuery tables in the configured project + dat
 
 See live docs at:
 
-- `https://openactivemonitorapi-cphbaxemfmgufddc.ukwest-01.azurewebsites.net/scalar/`
+- https://openactivemonitorapi-cphbaxemfmgufddc.ukwest-01.azurewebsites.net/scalar/
 
 ## Authentication
 
