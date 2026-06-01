@@ -115,18 +115,8 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		var parameters = new List<BigQueryParameter>();
 
 		AddLocationFilters(conditions, parameters, district, region, country);
-
-		if (!string.IsNullOrWhiteSpace(publisher))
-		{
-			conditions.Add("publisher = @publisher");
-			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
-		}
-
-		if (!string.IsNullOrWhiteSpace(activity))
-		{
-			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
-			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
-		}
+		AddPublisherFilter(conditions, parameters, publisher);
+		AddActivityFilter(conditions, parameters, activity);
 
 		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
 
@@ -148,16 +138,27 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// The response is keyed by country name; each country carries its <c>country_code</c> and a list of regions,
 	/// each region (keyed by region name) carries its <c>region_code</c> and a list of <c>{ district_name, district_code }</c> entries.
 	/// Districts whose region is null are attached directly to the country under a <c>districts</c> list.
+	/// <param name="publisher">Exact publisher name to match.</param>
+	/// <param name="activity">Activity or facility label.</param>
 	/// </remarks>
 	[HttpGet("areas")]
-	public async Task<IActionResult> Areas()
+	public async Task<IActionResult> Areas(string? publisher = null, string? activity = null)
 	{
+		var conditions = new List<string>();
+		var parameters = new List<BigQueryParameter>();
+
+		AddPublisherFilter(conditions, parameters, publisher);
+		AddActivityFilter(conditions, parameters, activity);
+
+		var extra_conditions = conditions.Count > 0 ? "AND " + string.Join(" AND ", conditions) : "";
+
 		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
 			SELECT DISTINCT country_name, country_code, region_name, region_code, district_name, district_code
 			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
-			WHERE country_name IS NOT NULL AND district_name IS NOT NULL
-			"""
+			WHERE country_name IS NOT NULL AND district_name IS NOT NULL {extra_conditions}
+			""",
+			parameters
 		);
 
 		var countryCodes = new Dictionary<string, string?>();
@@ -245,13 +246,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="district">Local authority district (LAD) code to match.</param>
 	/// <param name="region">Region code to match.</param>
 	/// <param name="country">Country code to match.</param>
+	/// <param name="activity">Activity or facility label.</param>
 	[HttpGet("publishers")]
-	public async Task<IActionResult> Publishers(string? district = null, string? region = null, string? country = null)
+	public async Task<IActionResult> Publishers(string? district = null, string? region = null, string? country = null, string? activity = null)
 	{
 		var conditions = new List<string> { "publisher IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
 
 		AddLocationFilters(conditions, parameters, district, region, country);
+		AddActivityFilter(conditions, parameters, activity);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -288,12 +291,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		var parameters = new List<BigQueryParameter>();
 
 		AddLocationFilters(conditions, parameters, district, region, country);
-
-		if (!string.IsNullOrWhiteSpace(publisher))
-		{
-			conditions.Add("publisher = @publisher");
-			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
-		}
+		AddPublisherFilter(conditions, parameters, publisher);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -335,6 +333,24 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		{
 			conditions.Add("country_code = @country");
 			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+		}
+	}
+
+	private static void AddPublisherFilter(List<string> conditions, List<BigQueryParameter> parameters, string? publisher)
+	{
+		if (!string.IsNullOrWhiteSpace(publisher))
+		{
+			conditions.Add("publisher = @publisher");
+			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
+		}
+	}
+
+	private static void AddActivityFilter(List<string> conditions, List<BigQueryParameter> parameters, string? activity)
+	{
+		if (!string.IsNullOrWhiteSpace(activity))
+		{
+			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
+			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
 		}
 	}
 
