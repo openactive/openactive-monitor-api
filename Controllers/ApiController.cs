@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using MonitorApi.Models;
 using System.ComponentModel.DataAnnotations;
 
 namespace MonitorApi.Controllers;
@@ -48,7 +49,8 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// The result is cached for one hour; the first request after expiry re-runs the underlying BigQuery queries.
 	/// </remarks>
 	[HttpGet("summary")]
-	public async Task<IActionResult> Summary()
+	[ProducesResponseType(typeof(SummaryResponse), StatusCodes.Status200OK)]
+	public async Task<ActionResult<SummaryResponse>> Summary()
 	{
 		// Cache the summary for one hour
 		var payload = await cache.GetOrCreateAsync(SummaryCacheKey, async entry =>
@@ -82,14 +84,14 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			var publishers = await publisherRows.FirstAsync();
 			var activities = await activityRows.FirstAsync();
 
-			return (object)new
+			return new SummaryResponse
 			{
-				number_of_opportunities = insight["n"],
-				number_of_publishers = publishers["n"],
-				number_of_activities = activities["n"],
-				percentage_of_local_authorities = 74,
-				number_of_activity_providers = 4885,
-				date = insight["run_date"],
+				NumberOfOpportunities = (long)insight["n"],
+				NumberOfPublishers = (long)publishers["n"],
+				NumberOfActivities = (long)activities["n"],
+				PercentageOfLocalAuthorities = 74,
+				NumberOfActivityProviders = 4885,
+				Date = (DateTime)insight["run_date"],
 			};
 		});
 
@@ -109,6 +111,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="country">Country code to match.</param>
 	/// <param name="activity">Activity or facility label.</param>
 	[HttpGet("opportunities")]
+	[ProducesResponseType(typeof(IEnumerable<Dictionary<string, object>>), StatusCodes.Status200OK)]
 	public Task<object> Opportunities(string? publisher = null, string? district = null, string? region = null, string? country = null, string? activity = null)
 	{
 		var conditions = new List<string>();
@@ -131,6 +134,76 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
+	/// Returns active opportunity records (one row per opportunity) from the raw <c>opportunities</c> table, paginated by offset and limit.
+	/// </summary>
+	/// <remarks>
+	/// In addition to the supplied filters, the result always satisfies: <c>startDate &gt;= today's midnight UTC</c>, non-empty <c>district_name</c>, and non-empty <c>publisher_name</c>.
+	/// Pagination is offset-based; <c>hasMore</c> indicates whether further results exist beyond the returned page (no total count is computed).
+	/// JSON columns (<c>location</c>, <c>activity</c>, <c>facility</c>, <c>json_data</c>) are emitted as nested JSON, not stringified.
+	/// </remarks>
+	/// <param name="publisher">Exact publisher name to match (against <c>publisher_name</c>).</param>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	/// <param name="activity">Activity or facility label; matches if present in either the <c>activity</c> array or the <c>facility</c> array.</param>
+	/// <param name="offset">Records offset. Default <c>0</c>.</param>
+	/// <param name="limit">Page size. Default <c>20</c>.</param>
+	[HttpGet("opportunity-records")]
+	[ProducesResponseType(typeof(PaginatedResponse<OpportunityRecord>), StatusCodes.Status200OK)]
+	public async Task<ActionResult<PaginatedResponse<OpportunityRecord>>> OpportunityRecords(
+		string? publisher = null,
+		string? district = null,
+		string? region = null,
+		string? country = null,
+		string? activity = null,
+		int offset = 0,
+		int limit = 20)
+	{
+		offset = Math.Max(0, offset);
+		limit = Math.Clamp(limit, 1, 100);
+
+		var conditions = new List<string>
+		{
+			"startDate >= TIMESTAMP(CURRENT_DATE())",
+			"district_name IS NOT NULL AND district_name != ''",
+			"publisher_name IS NOT NULL AND publisher_name != ''",
+		};
+		var parameters = new List<BigQueryParameter>();
+
+		AddLocationFilters(conditions, parameters, district, region, country);
+		AddPublisherFilter(conditions, parameters, publisher, column: "publisher_name");
+		AddOpportunityActivityFilter(conditions, parameters, activity);
+
+		parameters.Add(new BigQueryParameter("offset", BigQueryDbType.Int64, (long)offset));
+		parameters.Add(new BigQueryParameter("limit", BigQueryDbType.Int64, (long)(limit + 1)));
+
+		var where = "WHERE " + string.Join(" AND ", conditions);
+		var query = $"""
+			SELECT publisher_name, feed_id, id, kind, startDate, endDate, last_updated,
+			       location, district_name, district_code, region_name, region_code,
+			       country_name, country_code, activity, facility, json_data
+			FROM {Fq(Tables.Opportunities)}
+			{where}
+			ORDER BY startDate ASC, feed_id ASC, id ASC
+			LIMIT @limit OFFSET @offset
+			""";
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(query, parameters);
+		var fetched = await rows.ToListAsync();
+
+		var hasMore = fetched.Count > limit;
+		var items = fetched.Take(limit).Select(OpportunityRecord.FromBigQueryRow).ToList();
+
+		return Ok(new PaginatedResponse<OpportunityRecord>
+		{
+			Items = items,
+			Offset = offset,
+			Limit = limit,
+			HasMore = hasMore,
+		});
+	}
+
+	/// <summary>
 	/// Returns the full location hierarchy (country → regions → districts) derived from the opportunities data.
 	/// In Northern Ireland, Wales and Scotland, where there are no regions, districts are attached directly to the country (country → districts); in other countries, districts are grouped under their respective regions.
 	/// </summary>
@@ -142,6 +215,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="activity">Activity or facility label.</param>
 	/// </remarks>
 	[HttpGet("areas")]
+	[ProducesResponseType(typeof(Dictionary<string, object>), StatusCodes.Status200OK)]
 	public async Task<IActionResult> Areas(string? publisher = null, string? activity = null)
 	{
 		var conditions = new List<string>();
@@ -248,7 +322,8 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="country">Country code to match.</param>
 	/// <param name="activity">Activity or facility label.</param>
 	[HttpGet("publishers")]
-	public async Task<IActionResult> Publishers(string? district = null, string? region = null, string? country = null, string? activity = null)
+	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
+	public async Task<ActionResult<string[]>> Publishers(string? district = null, string? region = null, string? country = null, string? activity = null)
 	{
 		var conditions = new List<string> { "publisher IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -285,7 +360,8 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="region">Region code to match.</param>
 	/// <param name="country">Country code to match.</param>
 	[HttpGet("activities")]
-	public async Task<IActionResult> Activities(string? publisher = null, string? district = null, string? region = null, string? country = null)
+	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
+	public async Task<ActionResult<string[]>> Activities(string? publisher = null, string? district = null, string? region = null, string? country = null)
 	{
 		var conditions = new List<string> { "JSON_VALUE(a) IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -336,11 +412,11 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		}
 	}
 
-	private static void AddPublisherFilter(List<string> conditions, List<BigQueryParameter> parameters, string? publisher)
+	private static void AddPublisherFilter(List<string> conditions, List<BigQueryParameter> parameters, string? publisher, string column = "publisher")
 	{
 		if (!string.IsNullOrWhiteSpace(publisher))
 		{
-			conditions.Add("publisher = @publisher");
+			conditions.Add($"{column} = @publisher");
 			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
 		}
 	}
@@ -350,6 +426,18 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		if (!string.IsNullOrWhiteSpace(activity))
 		{
 			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) = @activity)");
+			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
+		}
+	}
+
+	private static void AddOpportunityActivityFilter(List<string> conditions, List<BigQueryParameter> parameters, string? activity)
+	{
+		if (!string.IsNullOrWhiteSpace(activity))
+		{
+			conditions.Add(
+				"(EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity)) AS a WHERE JSON_VALUE(a) = @activity) " +
+				"OR EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(facility)) AS f WHERE JSON_VALUE(f) = @activity))"
+			);
 			parameters.Add(new BigQueryParameter("activity", BigQueryDbType.String, activity));
 		}
 	}
