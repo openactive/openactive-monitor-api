@@ -387,6 +387,42 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		return Ok(activities);
 	}
 
+	/// <summary>
+	/// Returns feed quality rows for all feeds.
+	/// </summary>
+	/// <remarks>
+	/// This endpoint returns the latest values available in <c>feed_quality</c> for every row, with a fixed column set.
+	/// </remarks>
+	[HttpGet("feed-quality")]
+	[ProducesResponseType(typeof(IEnumerable<FeedQualityRecord>), StatusCodes.Status200OK)]
+	public async Task<ActionResult<IEnumerable<FeedQualityRecord>>> FeedQuality()
+	{
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT dataset_name,
+			       dataset_url,
+			       feed_type,
+			       feed_url,
+			       status,
+			       warnings,
+			       errors,
+			       location_completeness,
+			       start_date_completeness,
+			       end_date_completeness,
+			       activities_completeness,
+			       facilities_completeness,
+			       num_future_opportunity_items,
+			       feed_version,
+			       last_assessed
+			FROM {Fq(Tables.FeedQuality)}
+			ORDER BY last_assessed DESC, dataset_name ASC, feed_url ASC
+			"""
+		);
+
+		var records = await rows.Select(FeedQualityRecord.FromBigQueryRow).ToListAsync();
+		return Ok(records);
+	}
+
 	#endregion
 
 	#region Utilities

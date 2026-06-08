@@ -31,25 +31,15 @@ public class OpportunityRecord
 		StartDate = row.GetValueOrDefault("startDate") as DateTime?,
 		EndDate = row.GetValueOrDefault("endDate") as DateTime?,
 		LastUpdated = row.TryGetValue("last_updated", out var lu) && lu is DateTime d ? DateOnly.FromDateTime(d) : null,
-		Location = ParseJson(row.GetValueOrDefault("location")),
+		Location = BigQueryValueParser.ParseJson(row.GetValueOrDefault("location")),
 		DistrictName = row.GetValueOrDefault("district_name") as string,
 		DistrictCode = row.GetValueOrDefault("district_code") as string,
 		RegionName = row.GetValueOrDefault("region_name") as string,
 		RegionCode = row.GetValueOrDefault("region_code") as string,
 		CountryName = row.GetValueOrDefault("country_name") as string,
 		CountryCode = row.GetValueOrDefault("country_code") as string,
-		Activity = ParseJson(row.GetValueOrDefault("activity")),
-		Facility = ParseJson(row.GetValueOrDefault("facility")),
-		JsonData = ParseJson(row.GetValueOrDefault("json_data")),
+		Activity = BigQueryValueParser.ParseJson(row.GetValueOrDefault("activity")),
+		Facility = BigQueryValueParser.ParseJson(row.GetValueOrDefault("facility")),
+		JsonData = BigQueryValueParser.ParseJson(row.GetValueOrDefault("json_data")),
 	};
-
-	private static JsonElement? ParseJson(object? cell)
-	{
-		if (cell is not string s || string.IsNullOrWhiteSpace(s))
-		{
-			return null;
-		}
-		using var doc = JsonDocument.Parse(s);
-		return doc.RootElement.Clone();
-	}
 }

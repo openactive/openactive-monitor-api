@@ -9,6 +9,7 @@ ASP.NET Core Web API that powers OpenActive public dashboards by querying the Op
 - `GET /publishers`: Distinct publisher names (optional location filters)
 - `GET /activities`: Distinct activities/facilities (optional location filters)
 - `GET /opportunities`: Active opportunities (optional publisher/location/activity filters)
+- `GET /feed-quality`: Feed quality rows from `feed_quality` with selected quality metrics
 
 All data is read from configured BigQuery tables in the configured project + dataset.
 
