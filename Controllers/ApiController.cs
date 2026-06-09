@@ -65,6 +65,13 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 				LIMIT 1
 				"""
 			);
+			var opportunitiesCount = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+				$"""
+				SELECT COUNT(*) AS n
+				FROM {Fq(Tables.Opportunities)}
+				WHERE startDate >= TIMESTAMP(CURRENT_DATE()) AND district_name IS NOT NULL AND district_name != '' AND publisher_name IS NOT NULL AND publisher_name != ''
+				"""
+			);
 			var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 				$"""
 				SELECT COUNT(DISTINCT dataset_url) AS n
@@ -81,12 +88,13 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			);
 
 			var insight = await insightRows.FirstAsync();
+			var opportunities = await opportunitiesCount.FirstAsync();
 			var publishers = await publisherRows.FirstAsync();
 			var activities = await activityRows.FirstAsync();
 
 			return new SummaryResponse
 			{
-				NumberOfOpportunities = (long)insight["n"],
+				NumberOfOpportunities = (long)opportunities["n"],
 				NumberOfPublishers = (long)publishers["n"],
 				NumberOfActivities = (long)activities["n"],
 				PercentageOfLocalAuthorities = 74,
