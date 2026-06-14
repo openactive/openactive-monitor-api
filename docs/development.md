@@ -51,6 +51,8 @@ http://localhost:5268/opportunities?publisher=Ashmole%20Trust&token=
 http://localhost:5268/opportunities?district=E09000003&token=
 http://localhost:5268/opportunities?region=E12000007&country=E92000001&token=
 http://localhost:5268/opportunities?activity=Yoga&token=
+http://localhost:5268/opportunities?activity=Yoga&activity=Pilates&token=
+http://localhost:5268/opportunities?activity=Yoga,Pilates&token=
 ```
 
 `/opportunities` accepts these optional filters, combined with AND when more than one is supplied:
@@ -61,9 +63,11 @@ http://localhost:5268/opportunities?activity=Yoga&token=
 | `district`  | `district_code`                                  |
 | `region`    | `region_code`                                    |
 | `country`   | `country_code`                                   |
-| `activity`  | value present in the `activity_or_facility` JSON array |
+| `activity`  | any of the supplied values present in the `activity_or_facility` JSON array |
 
-`/publishers` returns all distinct publisher names in alphabetical order, accepting the optional `district`, `region`, and `country` filters (same column mapping as `/opportunities`, AND-combined).
+The `activity` filter accepts either a single value (`?activity=Yoga`) or multiple values — repeated (`?activity=Yoga&activity=Pilates`) or comma-separated (`?activity=Yoga,Pilates`). A row matches if **any** of the supplied activities is present (OR semantics within `activity`). The same multi-value behaviour applies to `/opportunity-records`, `/areas`, and `/publishers`.
+
+`/publishers` returns all distinct publisher names in alphabetical order, accepting the optional `district`, `region`, `country`, and `activity` filters (same column mapping as `/opportunities`, AND-combined across parameters).
 
 `/activities` returns every distinct activity/facility value (flattened from the `activity_or_facility` JSON array) in alphabetical order, accepting the same optional `district`, `region`, and `country` filters.
 

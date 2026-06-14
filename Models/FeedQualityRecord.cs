@@ -20,6 +20,10 @@ public class FeedQualityRecord
 	public long? NumFutureOpportunityItems { get; init; }
 	public string? FeedVersion { get; init; }
 	public DateTime? LastAssessed { get; init; }
+	public double? AgeRangeCompleteness { get; init; }
+	public double? LevelCompleteness { get; init; }
+	public double? AccessibilitySupportCompleteness { get; init; }
+	public double? GenderRestrictionCompleteness { get; init; }
 
 	public static FeedQualityRecord FromBigQueryRow(Dictionary<string, object> row) => new()
 	{
@@ -38,5 +42,9 @@ public class FeedQualityRecord
 		NumFutureOpportunityItems = BigQueryValueParser.AsLong(row.GetValueOrDefault("num_future_opportunity_items")),
 		FeedVersion = row.GetValueOrDefault("feed_version") as string,
 		LastAssessed = row.GetValueOrDefault("last_assessed") as DateTime?,
+		AgeRangeCompleteness = BigQueryValueParser.AsDouble(row.GetValueOrDefault("age_range_completeness")),
+		LevelCompleteness = BigQueryValueParser.AsDouble(row.GetValueOrDefault("level_completeness")),
+		AccessibilitySupportCompleteness = BigQueryValueParser.AsDouble(row.GetValueOrDefault("accessibility_support_completeness")),
+		GenderRestrictionCompleteness = BigQueryValueParser.AsDouble(row.GetValueOrDefault("gender_restriction_completeness")),
 	};
 }
