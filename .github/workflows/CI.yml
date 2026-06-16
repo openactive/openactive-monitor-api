@@ -1,0 +1,43 @@
+name: Run integration tests
+
+env:
+  DOTNET_VERSION: '10.x'
+  CREDENTIALS_FILE: openactive-monitor-credentials.json
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up .NET Core
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Write BigQuery credentials file
+        run: echo '${{ secrets.BIGQUERY_CREDENTIALS_JSON }}' > ${{ env.CREDENTIALS_FILE }}
+
+      - name: Write appsettings.Development.json
+        run: |
+          cat > appsettings.Development.json <<EOF
+          {
+            "BigQuery": {
+              "ProjectId": "${{ secrets.BIGQUERY_PROJECT_ID }}",
+              "DatasetId": "${{ secrets.BIGQUERY_DATASET_ID }}",
+              "Credentials": "${{ env.CREDENTIALS_FILE }}"
+            },
+            "Api": {
+              "AccessToken": "${{ secrets.API_ACCESS_TOKEN }}"
+            }
+          }
+          EOF
+
+      - name: Run tests
+        run: dotnet test MonitorApi.Tests/MonitorApi.Tests.csproj --configuration Release

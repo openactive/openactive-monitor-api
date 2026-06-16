@@ -25,6 +25,7 @@ public class OpportunityRecord
 	public string? Level { get; init; }
 	public JsonElement? AccessibilitySupport { get; init; }
 	public string? GenderRestriction { get; init; }
+	public string? OrganizationName { get; init; }
 
 	public static OpportunityRecord FromBigQueryRow(Dictionary<string, object> row) => new()
 	{
@@ -49,5 +50,6 @@ public class OpportunityRecord
 		Level = row.GetValueOrDefault("level") as string,
 		AccessibilitySupport = BigQueryValueParser.ParseJson(row.GetValueOrDefault("accessibilitySupport")),
 		GenderRestriction = row.GetValueOrDefault("genderRestriction") as string,
+		OrganizationName = row.GetValueOrDefault("organization_name") as string,
 	};
 }

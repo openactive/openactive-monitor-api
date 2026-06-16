@@ -102,3 +102,11 @@ Live services can be accessed from:
 ```
 https://openactivemonitorapi-cphbaxemfmgufddc.ukwest-01.azurewebsites.net/summary?token=
 ```
+
+## UnitTests
+
+Run the following command in the project root folder:
+
+```
+dotnet test MonitorApi.Tests/MonitorApi.Tests.csproj
+```

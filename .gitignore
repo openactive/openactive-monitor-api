@@ -2,6 +2,11 @@
 appsettings.Development.json
 
 /.vs
+.vscode
+
 /bin
 /obj
+MonitorApi.Tests/bin
+MonitorApi.Tests/obj
+
 *.user
