@@ -84,7 +84,11 @@ public class NhsTrustsEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixtu
 	[Fact]
 	public async Task TwoFilters_BothApplied()
 	{
-		var json = await Get("?country=E92000001&activity=Yoga");
-		Assert.Equal(JsonValueKind.Array, JsonSerializer.SerializeToElement(json).ValueKind);
+		var byCountry = await Get("?country=E92000001");
+		var byActivity = await Get("?activity=Yoga");
+		var byBoth = await Get("?country=E92000001&activity=Yoga");
+
+		Assert.Subset(byCountry.ToHashSet(), byBoth.ToHashSet());
+		Assert.Subset(byActivity.ToHashSet(), byBoth.ToHashSet());
 	}
 }
