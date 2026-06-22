@@ -40,9 +40,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	#region Endpoints
 
 	/// <summary>
-	/// Returns aggregate metrics across all opportunities (counts of opportunities, publishers, and activities).
+	/// Summary
 	/// </summary>
 	/// <remarks>
+	/// Returns aggregate metrics across all opportunities.
 	/// The result is cached for four hours via output caching; the first request after expiry re-runs the underlying BigQuery queries.
 	/// </remarks>
 	[HttpGet("summary")]
@@ -96,9 +97,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns active opportunities, optionally narrowed by publisher, location, and activity/facility type.
+	/// Opportunities
 	/// </summary>
 	/// <remarks>
+	/// Returns active opportunities.
 	/// When no parameters are supplied, all results are returned unfiltered.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// The <c>activity</c> filter accepts either a single value (<c>?activity=Yoga</c>) or multiple values
@@ -138,9 +140,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns active opportunity records (one row per opportunity) from the raw <c>opportunities</c> table, paginated by offset and limit.
+	/// Opportunity Records
 	/// </summary>
 	/// <remarks>
+	/// Returns paginated active opportunity records from the raw opportunities table.
 	/// In addition to the supplied filters, the result always satisfies: <c>startDate &gt;= today's midnight UTC</c>, non-empty <c>district_name</c>, and non-empty <c>publisher_name</c>.
 	/// Pagination is offset-based; <c>hasMore</c> indicates whether further results exist beyond the returned page (no total count is computed).
 	/// JSON columns (<c>location</c>, <c>activity</c>, <c>facility</c>, <c>json_data</c>) are emitted as nested JSON, not stringified.
@@ -214,10 +217,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns the full location hierarchy (country → regions → districts) derived from the opportunities data.
-	/// In Northern Ireland, Wales and Scotland, where there are no regions, districts are attached directly to the country (country → districts); in other countries, districts are grouped under their respective regions.
+	/// Areas
 	/// </summary>
 	/// <remarks>
+	/// Returns the location hierarchy derived from the opportunities data.
 	/// The response is keyed by country name; each country carries its <c>country_code</c> and a list of regions,
 	/// each region (keyed by region name) carries its <c>region_code</c> and a list of <c>{ district_name, district_code }</c> entries.
 	/// Districts whose region is null are attached directly to the country under a <c>districts</c> list.
@@ -325,9 +328,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns all distinct publisher names in alphabetical order, optionally narrowed by location.
+	/// Publishers
 	/// </summary>
 	/// <remarks>
+	/// Returns distinct publisher names.
 	/// When no parameters are supplied, every publisher is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
@@ -367,9 +371,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns every distinct activity/facility value (flattened from the <c>activity_or_facility</c> JSON array) in alphabetical order, optionally narrowed by location.
+	/// Activities
 	/// </summary>
 	/// <remarks>
+	/// Returns distinct activity and facility labels.
 	/// When no parameters are supplied, every activity is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
@@ -410,9 +415,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns all distinct NHS trust names in alphabetical order, optionally narrowed by location, publisher, activity, and organization.
+	/// NHS Trusts
 	/// </summary>
 	/// <remarks>
+	/// Returns distinct NHS trust names.
 	/// When no parameters are supplied, every NHS trust is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
@@ -452,8 +458,11 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns all distinct organization names in alphabetical order, optionally narrowed by location, publisher, and activity.
+	/// Organizations
 	/// </summary>
+	/// <remarks>
+	/// Returns distinct activity/facility provider (organization) names.
+	/// </remarks>
 	/// <param name="publisher">One or more publisher names.</param>
 	/// <param name="district">One or more local authority district (LAD) codes.</param>
 	/// <param name="region">One or more region codes.</param>
@@ -496,9 +505,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	}
 
 	/// <summary>
-	/// Returns feed quality rows for all feeds.
+	/// Feed Quality
 	/// </summary>
 	/// <remarks>
+	/// Returns feed quality rows for all feeds.
 	/// This endpoint returns the latest values available in <c>feed_quality</c> for every row, with a fixed column set.
 	/// </remarks>
 	[HttpGet("feed-quality")]
