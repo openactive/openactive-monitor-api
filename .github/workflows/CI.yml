@@ -22,19 +22,25 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Write BigQuery credentials file
-        run: echo '${{ secrets.BIGQUERY_CREDENTIALS_JSON }}' > ${{ env.CREDENTIALS_FILE }}
+        env:
+          CREDS: ${{ secrets.BIGQUERY_CREDENTIALS_JSON }}
+        run: printf '%s' "$CREDS" > "${{ env.CREDENTIALS_FILE }}"
 
       - name: Write appsettings.Development.json
+        env:
+          PROJECT_ID: ${{ secrets.BIGQUERY_PROJECT_ID }}
+          DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }}
+          ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
         run: |
           cat > appsettings.Development.json <<EOF
           {
             "BigQuery": {
-              "ProjectId": "${{ secrets.BIGQUERY_PROJECT_ID }}",
-              "DatasetId": "${{ secrets.BIGQUERY_DATASET_ID }}",
+              "ProjectId": "$PROJECT_ID",
+              "DatasetId": "$DATASET_ID",
               "Credentials": "${{ env.CREDENTIALS_FILE }}"
             },
             "Api": {
-              "AccessToken": "${{ secrets.API_ACCESS_TOKEN }}"
+              "AccessToken": "$ACCESS_TOKEN"
             }
           }
           EOF
