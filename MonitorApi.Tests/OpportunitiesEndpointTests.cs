@@ -107,4 +107,13 @@ public class OpportunitiesEndpointTests(ApiFixture fixture) : IClassFixture<ApiF
 		Assert.All(filtered.EnumerateArray(), row =>
 			Assert.Equal("E92000001", row.GetProperty("country_code").GetString()));
 	}
+
+	[Fact]
+	public async Task MultiValueCountryFilter_ReturnsSupersetOfSingleValue()
+	{
+		var singleCountry = await Get("?country=E92000001");
+		var multiCountry = await Get("?country=E92000001&country=W92000004");
+
+		Assert.True(multiCountry.GetArrayLength() >= singleCountry.GetArrayLength());
+	}
 }

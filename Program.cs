@@ -16,7 +16,14 @@ builder.Services
 	.ValidateDataAnnotations()
 	.ValidateOnStart();
 
-builder.Services.AddMemoryCache();
+builder.Services.AddOutputCache(options =>
+{
+	options.SizeLimit = 100 * 1024 * 1024;       
+    options.MaximumBodySize = 12 * 1024 * 1024;  
+	options.AddPolicy("FourHours", policy => policy
+		.Expire(TimeSpan.FromHours(4))
+		.SetVaryByQuery("*"));
+});
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -35,6 +42,8 @@ var app = builder.Build();
 
 app.MapOpenApi();
 app.MapScalarApiReference();
+
+app.UseOutputCache();
 
 app.MapControllers();
 
