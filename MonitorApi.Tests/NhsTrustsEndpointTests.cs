@@ -50,10 +50,12 @@ public class NhsTrustsEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixtu
 	}
 
 	[Fact]
-	public async Task ActivityFilter_ReturnsArray()
+	public async Task ActivityFilter_ReturnsSubsetOfUnfiltered()
 	{
-		var json = await Get("?activity=Yoga");
-		Assert.Equal(JsonValueKind.Array, JsonSerializer.SerializeToElement(json).ValueKind);
+		var unfiltered = await Get("");
+		var filtered = await Get("?activity=Yoga");
+
+		Assert.Subset(unfiltered.ToHashSet(), filtered.ToHashSet());
 	}
 
 	[Fact]
