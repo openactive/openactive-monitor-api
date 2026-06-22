@@ -8,7 +8,7 @@ ASP.NET Core Web API that powers OpenActive public dashboards by querying the Op
 - `GET /areas`: Location hierarchy (country -> regions -> districts)
 - `GET /publishers`: Distinct publisher names (optional location filters)
 - `GET /activities`: Distinct activities/facilities (optional location filters)
-- `GET /nhs-trusts`: Distinct NHS Trusts (optional publisher/location/activity filters)
+- `GET /nhs-trusts`: Distinct NHS Trusts (optional publisher/location/activity/organization filters)
 - `GET /opportunities`: Active opportunities (optional publisher/location/activity filters)
 - `GET /feed-quality`: Feed quality rows from `feed_quality` with selected quality metrics
 
