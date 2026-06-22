@@ -105,15 +105,16 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// (<c>?activity=Yoga&amp;activity=Pilates</c> or a comma-separated <c>?activity=Yoga,Pilates</c>);
 	/// rows are returned if any of the supplied activities is present.
 	/// </remarks>
-	/// <param name="publisher">Exact publisher name to match.</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
+	/// <param name="publisher">One or more publisher names. A row matches if any of the supplied values is present.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present.</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="organization">One or more organization names. A row matches if any of the supplied values is present.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present. Accepts repeated (<c>?nhsTrustCode=X&amp;nhsTrustCode=Y</c>) or comma-separated (<c>?nhsTrustCode=X,Y</c>) values.</param>
 	[HttpGet("opportunities")]
 	[ProducesResponseType(typeof(IEnumerable<Dictionary<string, object>>), StatusCodes.Status200OK)]
-	public Task<object> Opportunities(string? publisher = null, string? district = null, string? region = null, string? country = null, [FromQuery] string[]? activity = null, string? organization = null)
+	public Task<object> Opportunities([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhsTrustCode = null)
 	{
 		var conditions = new List<string>();
 		var parameters = new List<BigQueryParameter>();
@@ -122,6 +123,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddPublisherFilter(conditions, parameters, publisher);
 		AddActivityFilter(conditions, parameters, activity);
 		AddOrganizationFilter(conditions, parameters, organization);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
 
@@ -143,23 +145,25 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// Pagination is offset-based; <c>hasMore</c> indicates whether further results exist beyond the returned page (no total count is computed).
 	/// JSON columns (<c>location</c>, <c>activity</c>, <c>facility</c>, <c>json_data</c>) are emitted as nested JSON, not stringified.
 	/// </remarks>
-	/// <param name="publisher">Exact publisher name to match (against <c>publisher_name</c>).</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
+	/// <param name="publisher">One or more publisher names (against <c>publisher_name</c>).</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
 	/// <param name="activity">One or more activity/facility labels; a row matches if any of the supplied values is present in either the <c>activity</c> array or the <c>facility</c> array. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="organization">One or more organization names.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	/// <param name="offset">Records offset. Default <c>0</c>.</param>
 	/// <param name="limit">Page size. Default <c>20</c>.</param>
 	[HttpGet("opportunity-records")]
 	[ProducesResponseType(typeof(PaginatedResponse<OpportunityRecord>), StatusCodes.Status200OK)]
 	public async Task<ActionResult<PaginatedResponse<OpportunityRecord>>> OpportunityRecords(
-		string? publisher = null,
-		string? district = null,
-		string? region = null,
-		string? country = null,
+		[FromQuery] string[]? publisher = null,
+		[FromQuery] string[]? district = null,
+		[FromQuery] string[]? region = null,
+		[FromQuery] string[]? country = null,
 		[FromQuery] string[]? activity = null,
-		string? organization = null,
+		[FromQuery] string[]? organization = null,
+		[FromQuery] string[]? nhsTrustCode = null,
 		int offset = 0,
 		int limit = 20)
 	{
@@ -178,6 +182,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddPublisherFilter(conditions, parameters, publisher, column: "publisher_name");
 		AddOpportunityActivityFilter(conditions, parameters, activity);
 		AddOpportunityOrganizationFilter(conditions, parameters, organization);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		parameters.Add(new BigQueryParameter("offset", BigQueryDbType.Int64, (long)offset));
 		parameters.Add(new BigQueryParameter("limit", BigQueryDbType.Int64, (long)(limit + 1)));
@@ -216,13 +221,14 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// The response is keyed by country name; each country carries its <c>country_code</c> and a list of regions,
 	/// each region (keyed by region name) carries its <c>region_code</c> and a list of <c>{ district_name, district_code }</c> entries.
 	/// Districts whose region is null are attached directly to the country under a <c>districts</c> list.
-	/// <param name="publisher">Exact publisher name to match.</param>
+	/// <param name="publisher">One or more publisher names.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="organization">One or more organization names.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	/// </remarks>
 	[HttpGet("areas")]
 	[ProducesResponseType(typeof(Dictionary<string, object>), StatusCodes.Status200OK)]
-	public async Task<IActionResult> Areas(string? publisher = null, [FromQuery] string[]? activity = null, string? organization = null)
+	public async Task<IActionResult> Areas([FromQuery] string[]? publisher = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhsTrustCode = null)
 	{
 		var conditions = new List<string>();
 		var parameters = new List<BigQueryParameter>();
@@ -230,6 +236,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddPublisherFilter(conditions, parameters, publisher);
 		AddActivityFilter(conditions, parameters, activity);
 		AddOrganizationFilter(conditions, parameters, organization);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		var extra_conditions = conditions.Count > 0 ? "AND " + string.Join(" AND ", conditions) : "";
 
@@ -324,14 +331,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// When no parameters are supplied, every publisher is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="organization">One or more organization names.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	[HttpGet("publishers")]
 	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
-	public async Task<ActionResult<string[]>> Publishers(string? district = null, string? region = null, string? country = null, [FromQuery] string[]? activity = null, string? organization = null)
+	public async Task<ActionResult<string[]>> Publishers([FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhsTrustCode = null)
 	{
 		var conditions = new List<string> { "publisher IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -339,6 +347,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddLocationFilters(conditions, parameters, district, region, country);
 		AddActivityFilter(conditions, parameters, activity);
 		AddOrganizationFilter(conditions, parameters, organization);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -364,14 +373,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// When no parameters are supplied, every activity is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
-	/// <param name="publisher">Exact publisher name to match.</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="publisher">One or more publisher names.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
+	/// <param name="organization">One or more organization names.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	[HttpGet("activities")]
 	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
-	public async Task<ActionResult<string[]>> Activities(string? publisher = null, string? district = null, string? region = null, string? country = null, string? organization = null)
+	public async Task<ActionResult<string[]>> Activities([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhsTrustCode = null)
 	{
 		var conditions = new List<string> { "JSON_VALUE(a) IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -379,6 +389,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddLocationFilters(conditions, parameters, district, region, country);
 		AddPublisherFilter(conditions, parameters, publisher);
 		AddOrganizationFilter(conditions, parameters, organization);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -405,15 +416,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// When no parameters are supplied, every NHS trust is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
-	/// <param name="publisher">Exact publisher name to match.</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
+	/// <param name="publisher">One or more publisher names.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
-	/// <param name="organization">Exact organization name to match.</param>
+	/// <param name="organization">One or more organization names.</param>
 	[HttpGet("nhs-trusts")]
 	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
-	public async Task<ActionResult<string[]>> NhsTrusts(string? publisher = null, string? district = null, string? region = null, string? country = null, [FromQuery] string[]? activity = null, string? organization = null)
+	public async Task<ActionResult<string[]>> NhsTrusts([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null)
 	{
 		var conditions = new List<string> { "nhstrust_name IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -428,7 +439,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
 			SELECT DISTINCT nhstrust_name
-			FROM {Fq(Tables.ActiveOpportunitiesSummary2)}
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			{where}
 			""",
 			parameters
@@ -443,14 +454,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <summary>
 	/// Returns all distinct organization names in alphabetical order, optionally narrowed by location, publisher, and activity.
 	/// </summary>
-	/// <param name="publisher">Exact publisher name to match.</param>
-	/// <param name="district">Local authority district (LAD) code to match.</param>
-	/// <param name="region">Region code to match.</param>
-	/// <param name="country">Country code to match.</param>
+	/// <param name="publisher">One or more publisher names.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present.</param>
+	/// <param name="nhsTrustCode">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	[HttpGet("organizations")]
 	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
-	public async Task<ActionResult<string[]>> Organizations(string? publisher = null, string? district = null, string? region = null, string? country = null, [FromQuery] string[]? activity = null)
+	public async Task<ActionResult<string[]>> Organizations([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? nhsTrustCode = null)
 	{
 		var conditions = new List<string>
 		{
@@ -464,6 +476,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		AddLocationFilters(conditions, parameters, district, region, country);
 		AddPublisherFilter(conditions, parameters, publisher, column: "publisher_name");
 		AddOpportunityActivityFilter(conditions, parameters, activity);
+		AddNhsTrustFilter(conditions, parameters, nhsTrustCode);
 
 		var where = "WHERE " + string.Join(" AND ", conditions);
 
@@ -526,57 +539,69 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 	#region Utilities
 
-	private static void AddLocationFilters(List<string> conditions, List<BigQueryParameter> parameters, string? district, string? region, string? country)
+	private static void AddLocationFilters(List<string> conditions, List<BigQueryParameter> parameters, string[]? district, string[]? region, string[]? country)
 	{
-		if (!string.IsNullOrWhiteSpace(district))
+		var districts = NormaliseMultiValue(district);
+		if (districts.Count > 0)
 		{
-			conditions.Add("district_code = @district");
-			parameters.Add(new BigQueryParameter("district", BigQueryDbType.String, district));
+			conditions.Add("district_code IN UNNEST(@districts)");
+			parameters.Add(new BigQueryParameter("districts", BigQueryDbType.Array, districts) { ArrayElementType = BigQueryDbType.String });
 		}
 
-		if (!string.IsNullOrWhiteSpace(region))
+		var regions = NormaliseMultiValue(region);
+		if (regions.Count > 0)
 		{
-			conditions.Add("region_code = @region");
-			parameters.Add(new BigQueryParameter("region", BigQueryDbType.String, region));
+			conditions.Add("region_code IN UNNEST(@regions)");
+			parameters.Add(new BigQueryParameter("regions", BigQueryDbType.Array, regions) { ArrayElementType = BigQueryDbType.String });
 		}
 
-		if (!string.IsNullOrWhiteSpace(country))
+		var countries = NormaliseMultiValue(country);
+		if (countries.Count > 0)
 		{
-			conditions.Add("country_code = @country");
-			parameters.Add(new BigQueryParameter("country", BigQueryDbType.String, country));
+			conditions.Add("country_code IN UNNEST(@countries)");
+			parameters.Add(new BigQueryParameter("countries", BigQueryDbType.Array, countries) { ArrayElementType = BigQueryDbType.String });
 		}
 	}
 
-	private static void AddPublisherFilter(List<string> conditions, List<BigQueryParameter> parameters, string? publisher, string column = "publisher")
+	private static void AddPublisherFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? publisher, string column = "publisher")
 	{
-		if (!string.IsNullOrWhiteSpace(publisher))
-		{
-			conditions.Add($"{column} = @publisher");
-			parameters.Add(new BigQueryParameter("publisher", BigQueryDbType.String, publisher));
-		}
+		var values = NormaliseMultiValue(publisher);
+		if (values.Count == 0) return;
+
+		conditions.Add($"{column} IN UNNEST(@publishers)");
+		parameters.Add(new BigQueryParameter("publishers", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
 	}
 
-	private static void AddOrganizationFilter(List<string> conditions, List<BigQueryParameter> parameters, string? organization)
+	private static void AddOrganizationFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? organization)
 	{
-		if (!string.IsNullOrWhiteSpace(organization))
-		{
-			conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(organization_names)) AS o WHERE JSON_VALUE(o) = @organization)");
-			parameters.Add(new BigQueryParameter("organization", BigQueryDbType.String, organization));
-		}
+		var values = NormaliseMultiValue(organization);
+		if (values.Count == 0) return;
+
+		conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(organization_names)) AS o WHERE JSON_VALUE(o) IN UNNEST(@organizations))");
+		parameters.Add(new BigQueryParameter("organizations", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
 	}
 
-	private static void AddOpportunityOrganizationFilter(List<string> conditions, List<BigQueryParameter> parameters, string? organization)
+	private static void AddOpportunityOrganizationFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? organization)
 	{
-		if (!string.IsNullOrWhiteSpace(organization))
-		{
-			conditions.Add("organization_name = @organization");
-			parameters.Add(new BigQueryParameter("organization", BigQueryDbType.String, organization));
-		}
+		var values = NormaliseMultiValue(organization);
+		if (values.Count == 0) return;
+
+		conditions.Add("organization_name IN UNNEST(@organizations)");
+		parameters.Add(new BigQueryParameter("organizations", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
+	}
+
+	private static void AddNhsTrustFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? nhsTrustCode, string column = "nhstrust_code")
+	{
+		var values = NormaliseMultiValue(nhsTrustCode);
+		if (values.Count == 0) return;
+
+		conditions.Add($"{column} IN UNNEST(@nhsTrustCodes)");
+		parameters.Add(new BigQueryParameter("nhsTrustCodes", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
 	}
 
 	private static void AddActivityFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? activity)
 	{
-		var values = NormaliseActivities(activity);
+		var values = NormaliseMultiValue(activity);
 		if (values.Count == 0) return;
 
 		conditions.Add("EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(activity_or_facility)) AS a WHERE JSON_VALUE(a) IN UNNEST(@activities))");
@@ -585,7 +610,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 	private static void AddOpportunityActivityFilter(List<string> conditions, List<BigQueryParameter> parameters, string[]? activity)
 	{
-		var values = NormaliseActivities(activity);
+		var values = NormaliseMultiValue(activity);
 		if (values.Count == 0) return;
 
 		conditions.Add(
@@ -595,11 +620,11 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		parameters.Add(new BigQueryParameter("activities", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
 	}
 
-	private static List<string> NormaliseActivities(string[]? activity)
+	private static List<string> NormaliseMultiValue(string[]? values)
 	{
-		if (activity is null || activity.Length == 0) return [];
+		if (values is null || values.Length == 0) return [];
 
-		return activity
+		return values
 			.SelectMany(a => a?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [])
 			.Where(a => !string.IsNullOrWhiteSpace(a))
 			.Distinct()

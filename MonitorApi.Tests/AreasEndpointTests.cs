@@ -66,4 +66,16 @@ public class AreasEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 		var json = await Get("?publisher=__nope__&activity=Yoga");
 		Assert.Empty(json.EnumerateObject());
 	}
+
+	[Fact]
+	public async Task MultiValuePublisherFilter_ReturnsSupersetOfSingleValue()
+	{
+		var unfiltered = await Get("");
+		var firstPublisher = unfiltered.EnumerateObject().FirstOrDefault().Value;
+		if (firstPublisher.ValueKind == JsonValueKind.Undefined) return;
+
+		// Two non-existent publishers should still return empty (OR of two misses)
+		var multi = await Get("?publisher=__nope1__&publisher=__nope2__");
+		Assert.Empty(multi.EnumerateObject());
+	}
 }

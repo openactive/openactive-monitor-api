@@ -78,4 +78,13 @@ public class PublishersEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixt
 		var json = await Get("?country=E92000001&activity=Yoga");
 		Assert.Equal(JsonValueKind.Array, JsonSerializer.SerializeToElement(json).ValueKind);
 	}
+
+	[Fact]
+	public async Task MultiValueCountryFilter_ReturnsSupersetOfSingleValue()
+	{
+		var singleCountry = await Get("?country=E92000001");
+		var multiCountry = await Get("?country=E92000001&country=W92000004");
+
+		Assert.Subset(multiCountry.ToHashSet(), singleCountry.ToHashSet());
+	}
 }

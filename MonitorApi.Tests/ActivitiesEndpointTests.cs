@@ -76,4 +76,13 @@ public class ActivitiesEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixt
 		Assert.Empty(filtered);
 		Assert.NotEmpty(unfiltered); // sanity: unfiltered isn't itself empty
 	}
+
+	[Fact]
+	public async Task MultiValueCountryFilter_ReturnsSupersetOfSingleValue()
+	{
+		var singleCountry = await Get("?country=E92000001");
+		var multiCountry = await Get("?country=E92000001&country=W92000004");
+
+		Assert.Subset(multiCountry.ToHashSet(), singleCountry.ToHashSet());
+	}
 }

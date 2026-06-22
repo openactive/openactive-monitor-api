@@ -91,4 +91,13 @@ public class NhsTrustsEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixtu
 		Assert.Subset(byCountry.ToHashSet(), byBoth.ToHashSet());
 		Assert.Subset(byActivity.ToHashSet(), byBoth.ToHashSet());
 	}
+
+	[Fact]
+	public async Task MultiValueCountryFilter_ReturnsSupersetOfSingleValue()
+	{
+		var singleCountry = await Get("?country=E92000001");
+		var multiCountry = await Get("?country=E92000001&country=W92000004");
+
+		Assert.Subset(multiCountry.ToHashSet(), singleCountry.ToHashSet());
+	}
 }
