@@ -1,7 +1,7 @@
 using Google.Cloud.BigQuery.V2;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.Extensions.Options;
 using MonitorApi.Models;
 using System.ComponentModel.DataAnnotations;
@@ -14,14 +14,11 @@ namespace MonitorApi.Controllers;
 /// </summary>
 [Route("/")]
 [ApiController]
-public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOptions> apiOptions, IMemoryCache cache) : ControllerBase, IActionFilter
+[OutputCache(PolicyName = "FourHours")]
+public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOptions> apiOptions) : ControllerBase, IActionFilter
 {
-	private const string SummaryCacheKey = "summary";
-	private static readonly TimeSpan SummaryCacheTtl = TimeSpan.FromHours(1);
-
 	protected BigQueryOptions options = options.Value;
 	protected ApiOptions apiOptions = apiOptions.Value;
-	protected IMemoryCache cache = cache;
 
 	public void OnActionExecuting(ActionExecutingContext context)
 	{
@@ -46,64 +43,56 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// Returns aggregate metrics across all opportunities (counts of opportunities, publishers, and activities).
 	/// </summary>
 	/// <remarks>
-	/// The result is cached for one hour; the first request after expiry re-runs the underlying BigQuery queries.
+	/// The result is cached for four hours via output caching; the first request after expiry re-runs the underlying BigQuery queries.
 	/// </remarks>
 	[HttpGet("summary")]
 	[ProducesResponseType(typeof(SummaryResponse), StatusCodes.Status200OK)]
 	public async Task<ActionResult<SummaryResponse>> Summary()
 	{
-		// Cache the summary for one hour
-		var payload = await cache.GetOrCreateAsync(SummaryCacheKey, async entry =>
+		var insightRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT total_num_future_opportunity_items AS n, run_date
+			FROM {Fq(Tables.InsightRunSummary)}
+			ORDER BY run_date DESC
+			LIMIT 1
+			"""
+		);
+		var opportunitiesCount = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT COUNT(*) AS n
+			FROM {Fq(Tables.Opportunities)}
+			WHERE startDate >= TIMESTAMP(CURRENT_DATE()) AND district_name IS NOT NULL AND district_name != '' AND publisher_name IS NOT NULL AND publisher_name != ''
+			"""
+		);
+		var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT COUNT(DISTINCT dataset_url) AS n
+			FROM {Fq(Tables.Feeds)}
+			"""
+		);
+		var activityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT COUNT(DISTINCT JSON_VALUE(a)) AS n
+			FROM {Fq(Tables.Opportunities)} AS o,
+			     UNNEST(JSON_EXTRACT_ARRAY(o.activity)) AS a
+			WHERE JSON_VALUE(a) IS NOT NULL
+			"""
+		);
+
+		var insight = await insightRows.FirstAsync();
+		var opportunities = await opportunitiesCount.FirstAsync();
+		var publishers = await publisherRows.FirstAsync();
+		var activities = await activityRows.FirstAsync();
+
+		return Ok(new SummaryResponse
 		{
-			entry.AbsoluteExpirationRelativeToNow = SummaryCacheTtl;
-
-			var insightRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
-				$"""
-				SELECT total_num_future_opportunity_items AS n, run_date
-				FROM {Fq(Tables.InsightRunSummary)}
-				ORDER BY run_date DESC
-				LIMIT 1
-				"""
-			);
-			var opportunitiesCount = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
-				$"""
-				SELECT COUNT(*) AS n
-				FROM {Fq(Tables.Opportunities)}
-				WHERE startDate >= TIMESTAMP(CURRENT_DATE()) AND district_name IS NOT NULL AND district_name != '' AND publisher_name IS NOT NULL AND publisher_name != ''
-				"""
-			);
-			var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
-				$"""
-				SELECT COUNT(DISTINCT dataset_url) AS n
-				FROM {Fq(Tables.Feeds)}
-				"""
-			);
-			var activityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
-				$"""
-				SELECT COUNT(DISTINCT JSON_VALUE(a)) AS n
-				FROM {Fq(Tables.Opportunities)} AS o,
-				     UNNEST(JSON_EXTRACT_ARRAY(o.activity)) AS a
-				WHERE JSON_VALUE(a) IS NOT NULL
-				"""
-			);
-
-			var insight = await insightRows.FirstAsync();
-			var opportunities = await opportunitiesCount.FirstAsync();
-			var publishers = await publisherRows.FirstAsync();
-			var activities = await activityRows.FirstAsync();
-
-			return new SummaryResponse
-			{
-				NumberOfOpportunities = (long)opportunities["n"],
-				NumberOfPublishers = (long)publishers["n"],
-				NumberOfActivities = (long)activities["n"],
-				PercentageOfLocalAuthorities = 74,
-				NumberOfActivityProviders = 4885,
-				Date = (DateTime)insight["run_date"],
-			};
+			NumberOfOpportunities = (long)opportunities["n"],
+			NumberOfPublishers = (long)publishers["n"],
+			NumberOfActivities = (long)activities["n"],
+			PercentageOfLocalAuthorities = 74,
+			NumberOfActivityProviders = 4885,
+			Date = (DateTime)insight["run_date"],
 		});
-
-		return Ok(payload);
 	}
 
 	/// <summary>
@@ -407,6 +396,48 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		activities.Sort(StringComparer.OrdinalIgnoreCase);
 
 		return Ok(activities);
+	}
+
+	/// <summary>
+	/// Returns all distinct NHS trust names in alphabetical order, optionally narrowed by location, publisher, activity, and organization.
+	/// </summary>
+	/// <remarks>
+	/// When no parameters are supplied, every NHS trust is returned.
+	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
+	/// </remarks>
+	/// <param name="publisher">Exact publisher name to match.</param>
+	/// <param name="district">Local authority district (LAD) code to match.</param>
+	/// <param name="region">Region code to match.</param>
+	/// <param name="country">Country code to match.</param>
+	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
+	/// <param name="organization">Exact organization name to match.</param>
+	[HttpGet("nhs-trusts")]
+	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
+	public async Task<ActionResult<string[]>> NhsTrusts(string? publisher = null, string? district = null, string? region = null, string? country = null, [FromQuery] string[]? activity = null, string? organization = null)
+	{
+		var conditions = new List<string> { "nhstrust_name IS NOT NULL" };
+		var parameters = new List<BigQueryParameter>();
+
+		AddLocationFilters(conditions, parameters, district, region, country);
+		AddPublisherFilter(conditions, parameters, publisher);
+		AddActivityFilter(conditions, parameters, activity);
+		AddOrganizationFilter(conditions, parameters, organization);
+
+		var where = "WHERE " + string.Join(" AND ", conditions);
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT DISTINCT nhstrust_name
+			FROM {Fq(Tables.ActiveOpportunitiesSummary2)}
+			{where}
+			""",
+			parameters
+		);
+
+		var trusts = await rows.Select(r => (string)r["nhstrust_name"]).ToListAsync();
+		trusts.Sort(StringComparer.OrdinalIgnoreCase);
+
+		return Ok(trusts);
 	}
 
 	/// <summary>
