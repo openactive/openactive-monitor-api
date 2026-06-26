@@ -116,4 +116,28 @@ public class OpportunitiesEndpointTests(ApiFixture fixture) : IClassFixture<ApiF
 
 		Assert.True(multiCountry.GetArrayLength() >= singleCountry.GetArrayLength());
 	}
+
+	[Fact]
+	public async Task CountryAndDistrictFilters_AreCombinedWithOr()
+	{
+		// country and district filters are OR'd together: each row matches either the
+		// country (England) OR the district (a Scottish LAD), not both.
+		var filtered = await Get("?country=E92000001&district=S12000041");
+
+		Assert.All(filtered.EnumerateArray(), row =>
+		{
+			var countryCode = row.TryGetProperty("country_code", out var c) ? c.GetString() : null;
+			var districtCode = row.TryGetProperty("district_code", out var d) ? d.GetString() : null;
+
+			Assert.True(
+				countryCode == "E92000001" || districtCode == "S12000041",
+				$"Row matched neither filter (country_code='{countryCode}', district_code='{districtCode}').");
+		});
+
+		// The OR result is a superset of either single-filter result.
+		var country = await Get("?country=E92000001");
+		var district = await Get("?district=S12000041");
+		Assert.True(filtered.GetArrayLength() >= country.GetArrayLength());
+		Assert.True(filtered.GetArrayLength() >= district.GetArrayLength());
+	}
 }
