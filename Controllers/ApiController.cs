@@ -551,25 +551,32 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 	private static void AddLocationFilters(List<string> conditions, List<BigQueryParameter> parameters, string[]? district, string[]? region, string[]? country)
 	{
+		var locationConditions = new List<string>();
+
 		var districts = NormaliseMultiValue(district);
 		if (districts.Count > 0)
 		{
-			conditions.Add("district_code IN UNNEST(@districts)");
+			locationConditions.Add("district_code IN UNNEST(@districts)");
 			parameters.Add(new BigQueryParameter("districts", BigQueryDbType.Array, districts) { ArrayElementType = BigQueryDbType.String });
 		}
 
 		var regions = NormaliseMultiValue(region);
 		if (regions.Count > 0)
 		{
-			conditions.Add("region_code IN UNNEST(@regions)");
+			locationConditions.Add("region_code IN UNNEST(@regions)");
 			parameters.Add(new BigQueryParameter("regions", BigQueryDbType.Array, regions) { ArrayElementType = BigQueryDbType.String });
 		}
 
 		var countries = NormaliseMultiValue(country);
 		if (countries.Count > 0)
 		{
-			conditions.Add("country_code IN UNNEST(@countries)");
+			locationConditions.Add("country_code IN UNNEST(@countries)");
 			parameters.Add(new BigQueryParameter("countries", BigQueryDbType.Array, countries) { ArrayElementType = BigQueryDbType.String });
+		}
+
+		if (locationConditions.Count > 0)
+		{
+			conditions.Add("(" + string.Join(" OR ", locationConditions) + ")");
 		}
 	}
 
