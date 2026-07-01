@@ -418,7 +418,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// NHS Trusts
 	/// </summary>
 	/// <remarks>
-	/// Returns distinct NHS trust names.
+	/// Returns distinct NHS trust names and codes.
 	/// When no parameters are supplied, every NHS trust is returned.
 	/// Supplying one or more parameters narrows the results — all supplied filters are combined with AND.
 	/// </remarks>
@@ -429,8 +429,8 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
 	/// <param name="organization">One or more organization names.</param>
 	[HttpGet("nhs-trusts")]
-	[ProducesResponseType(typeof(string[]), StatusCodes.Status200OK)]
-	public async Task<ActionResult<string[]>> NhsTrusts([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null)
+	[ProducesResponseType(typeof(NhsTrustRecord[]), StatusCodes.Status200OK)]
+	public async Task<ActionResult<NhsTrustRecord[]>> NhsTrusts([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null)
 	{
 		var conditions = new List<string> { "nhstrust_name IS NOT NULL" };
 		var parameters = new List<BigQueryParameter>();
@@ -444,15 +444,25 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT DISTINCT nhstrust_name
+			SELECT DISTINCT nhstrust_name, nhstrust_code
 			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			{where}
 			""",
 			parameters
 		);
 
-		var trusts = await rows.Select(r => (string)r["nhstrust_name"]).ToListAsync();
-		trusts.Sort(StringComparer.OrdinalIgnoreCase);
+		var trusts = await rows
+			.Select(r => new NhsTrustRecord
+			{
+				NhsTrustName = (string)r["nhstrust_name"],
+				NhsTrustCode = r.GetValueOrDefault("nhstrust_code") as string,
+			})
+			.ToListAsync();
+
+		trusts = trusts
+			.OrderBy(t => t.NhsTrustName, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(t => t.NhsTrustCode ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+			.ToList();
 
 		return Ok(trusts);
 	}
