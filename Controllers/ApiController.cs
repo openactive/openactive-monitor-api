@@ -520,11 +520,68 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// <remarks>
 	/// Returns feed quality rows for all feeds.
 	/// This endpoint returns the latest values available in <c>feed_quality</c> for every row, with a fixed column set.
+	/// When no parameters are supplied, all feed quality rows are returned unfiltered.
+	/// Supplying one or more parameters narrows the results in two phases: first the distinct publishers matching the
+	/// filters are resolved from <c>active_opportunities_summary</c> (all supplied filters are combined with AND),
+	/// then <c>feed_quality</c> is restricted to the feeds published by those publishers (bridged through the
+	/// <c>feeds</c> table on <c>dataset_url</c>).
 	/// </remarks>
+	/// <param name="publisher">One or more publisher names. A row matches if any of the supplied values is present.</param>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
+	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
+	/// <param name="organization">One or more organization names.</param>
+	/// <param name="nhs_trust">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
 	[HttpGet("feed-quality")]
 	[ProducesResponseType(typeof(IEnumerable<FeedQualityRecord>), StatusCodes.Status200OK)]
-	public async Task<ActionResult<IEnumerable<FeedQualityRecord>>> FeedQuality()
+	public async Task<ActionResult<IEnumerable<FeedQualityRecord>>> FeedQuality([FromQuery] string[]? publisher = null, [FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhs_trust = null)
 	{
+		var parameters = new List<BigQueryParameter>();
+		var filter = "";
+
+		// Phase 1: resolve the distinct publishers matching the supplied filters from the summary table.
+		// Phase 2 (below) then restricts feed_quality to the feeds owned by those publishers.
+		var phaseOneConditions = new List<string> { "publisher IS NOT NULL" };
+		var phaseOneParameters = new List<BigQueryParameter>();
+
+		AddLocationFilters(phaseOneConditions, phaseOneParameters, district, region, country);
+		AddPublisherFilter(phaseOneConditions, phaseOneParameters, publisher);
+		AddActivityFilter(phaseOneConditions, phaseOneParameters, activity);
+		AddOrganizationFilter(phaseOneConditions, phaseOneParameters, organization);
+		AddNhsTrustFilter(phaseOneConditions, phaseOneParameters, nhs_trust);
+
+		// Only run the two-phase filtering when at least one filter was actually supplied; otherwise return everything.
+		if (phaseOneParameters.Count > 0)
+		{
+			var phaseOneWhere = "WHERE " + string.Join(" AND ", phaseOneConditions);
+			var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+				$"""
+				SELECT DISTINCT publisher
+				FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+				{phaseOneWhere}
+				""",
+				phaseOneParameters
+			);
+
+			var publishers = await publisherRows.Select(r => (string)r["publisher"]).ToListAsync();
+			if (publishers.Count == 0)
+			{
+				return Ok(Array.Empty<FeedQualityRecord>());
+			}
+
+			// Phase 2: feed_quality has no publisher column, so bridge through feeds on dataset_url.
+			// TODO: implement denormalisation to prevent extra query
+			filter = $"""
+				WHERE dataset_url IN (
+					SELECT dataset_url
+					FROM {Fq(Tables.Feeds)}
+					WHERE publisher_name IN UNNEST(@publishers)
+				)
+				""";
+			parameters.Add(new BigQueryParameter("publishers", BigQueryDbType.Array, publishers) { ArrayElementType = BigQueryDbType.String });
+		}
+
 		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
 			SELECT dataset_name,
@@ -547,8 +604,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			       feed_version,
 			       last_assessed
 			FROM {Fq(Tables.FeedQuality)}
+			{filter}
 			ORDER BY last_assessed DESC, dataset_name ASC, feed_url ASC
-			"""
+			""",
+			parameters
 		);
 
 		var records = await rows.Select(FeedQualityRecord.FromBigQueryRow).ToListAsync();
