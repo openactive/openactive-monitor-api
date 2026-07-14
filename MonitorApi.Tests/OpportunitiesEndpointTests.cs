@@ -140,4 +140,49 @@ public class OpportunitiesEndpointTests(ApiFixture fixture) : IClassFixture<ApiF
 		Assert.True(filtered.GetArrayLength() >= country.GetArrayLength());
 		Assert.True(filtered.GetArrayLength() >= district.GetArrayLength());
 	}
+
+	[Fact]
+	public async Task NhsTrustAllFilter_AllRowsHaveNhsTrustCode()
+	{
+		var filtered = await Get("?nhs_trust=all");
+
+		Assert.All(filtered.EnumerateArray(), row =>
+		{
+			Assert.True(row.TryGetProperty("nhstrust_code", out var code), "Row is missing nhstrust_code.");
+			Assert.Equal(JsonValueKind.String, code.ValueKind);
+			Assert.False(string.IsNullOrEmpty(code.GetString()));
+		});
+	}
+
+	[Fact]
+	public async Task NhsTrustAllFilter_IsCaseInsensitive()
+	{
+		var lower = await Get("?nhs_trust=all");
+		var mixed = await Get("?nhs_trust=AlL");
+
+		Assert.Equal(lower.GetArrayLength(), mixed.GetArrayLength());
+	}
+
+	[Fact]
+	public async Task NhsTrustAllFilter_OverridesSpecificValues()
+	{
+		var all = await Get("?nhs_trust=all");
+		var allWithSpecific = await Get("?nhs_trust=all&nhs_trust=__nope__");
+
+		// "all" wins, so the extra non-existent code is ignored rather than narrowing to empty.
+		Assert.Equal(all.GetArrayLength(), allWithSpecific.GetArrayLength());
+	}
+
+	[Fact]
+	public async Task NhsTrustAllFilter_ReturnsSupersetOfSpecificTrust()
+	{
+		var all = await Get("?nhs_trust=all");
+		if (all.GetArrayLength() == 0) return; // no NHS trust data — nothing to compare
+
+		var code = all[0].GetProperty("nhstrust_code").GetString();
+		var specific = await Get($"?nhs_trust={Uri.EscapeDataString(code!)}");
+
+		Assert.True(all.GetArrayLength() >= specific.GetArrayLength());
+	}
 }
+

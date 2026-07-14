@@ -79,19 +79,45 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			WHERE JSON_VALUE(a) IS NOT NULL
 			"""
 		);
+		var facilityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT COUNT(DISTINCT JSON_VALUE(f)) AS n
+			FROM {Fq(Tables.Opportunities)} AS o,
+			     UNNEST(JSON_EXTRACT_ARRAY(o.facility)) AS f
+			WHERE JSON_VALUE(f) IS NOT NULL
+			"""
+		);
+		var activityProviderRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT COUNT(DISTINCT organization_name) AS n
+			FROM {Fq(Tables.Opportunities)}
+			"""
+		);
+		var facilityUseRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$$"""
+			SELECT COUNT(*) AS n
+			FROM {{Fq(Tables.Opportunities)}}
+			WHERE (kind = "IndividualFacilityUse" OR kind = "FacilityUse") AND TO_JSON_STRING(location) != "{}"
+			"""
+		);
 
 		var insight = await insightRows.FirstAsync();
 		var opportunities = await opportunitiesCount.FirstAsync();
 		var publishers = await publisherRows.FirstAsync();
 		var activities = await activityRows.FirstAsync();
+		var facilities = await facilityRows.FirstAsync();
+		var activityProviders = await activityProviderRows.FirstAsync();
+		var facilityUses = await facilityUseRows.FirstAsync();
 
 		return Ok(new SummaryResponse
 		{
 			NumberOfOpportunities = (long)opportunities["n"],
 			NumberOfPublishers = (long)publishers["n"],
 			NumberOfActivities = (long)activities["n"],
+			NumberOfFacilityTypes = (long)facilities["n"],
+			NumberOfFacilities = (long)facilityUses["n"],
 			PercentageOfLocalAuthorities = 74,
-			NumberOfActivityProviders = 4885,
+			NumberOfActivityProviders = (long)activityProviders["n"],
 			Date = (DateTime)insight["run_date"],
 		});
 	}
@@ -680,6 +706,13 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	{
 		var values = NormaliseMultiValue(nhs_trust);
 		if (values.Count == 0) return;
+
+		// Special case: "all" (case-insensitive) matches every row that has an NHS trust code, ignoring the other values.
+		if (values.Any(v => string.Equals(v, "all", StringComparison.OrdinalIgnoreCase)))
+		{
+			conditions.Add($"{column} IS NOT NULL");
+			return;
+		}
 
 		conditions.Add($"{column} IN UNNEST(@nhs_trusts)");
 		parameters.Add(new BigQueryParameter("nhs_trusts", BigQueryDbType.Array, values) { ArrayElementType = BigQueryDbType.String });
