@@ -11,9 +11,13 @@ public class SummaryResponse
 
 	public required long NumberOfActivities { get; init; }
 
+	public required long NumberOfFacilityTypes { get; init; }
+
+	public required long NumberOfFacilities { get; init; }
+
 	public required int PercentageOfLocalAuthorities { get; init; }
 
-	public required int NumberOfActivityProviders { get; init; }
+	public required long NumberOfActivityProviders { get; init; }
 
 	public required DateTime Date { get; init; }
 }
