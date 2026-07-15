@@ -78,4 +78,58 @@ public class AreasEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 		var multi = await Get("?publisher=__nope1__&publisher=__nope2__");
 		Assert.Empty(multi.EnumerateObject());
 	}
+
+	[Fact]
+	public async Task WithoutSocioFlag_NodesHaveNullSocio()
+	{
+		var json = await Get("");
+
+		foreach (var country in json.EnumerateObject())
+		{
+			Assert.True(country.Value.TryGetProperty("socio", out var socio),
+				$"Country '{country.Name}' is missing socio");
+			Assert.Equal(JsonValueKind.Null, socio.ValueKind);
+		}
+	}
+
+	[Fact]
+	public async Task WithSocioFlag_NodesCarrySocioField()
+	{
+		var json = await Get("?socio=true");
+
+		foreach (var country in json.EnumerateObject())
+		{
+			Assert.True(country.Value.TryGetProperty("socio", out var socio),
+				$"Country '{country.Name}' is missing socio");
+
+			// socio is either null (no matching area) or an object exposing total_population.
+			if (socio.ValueKind == JsonValueKind.Object)
+			{
+				Assert.True(socio.TryGetProperty("total_population", out _));
+				Assert.Equal(country.Value.GetProperty("country_code").GetString(),
+					socio.GetProperty("area_code").GetString());
+			}
+			else
+			{
+				Assert.Equal(JsonValueKind.Null, socio.ValueKind);
+			}
+		}
+	}
+
+	[Fact]
+	public async Task WithSocioFlag_EnglandCountryIsEnriched()
+	{
+		var json = await Get("?socio=true");
+
+		foreach (var country in json.EnumerateObject())
+		{
+			if (country.Value.GetProperty("country_code").GetString() != "E92000001") continue;
+
+			var socio = country.Value.GetProperty("socio");
+			Assert.Equal(JsonValueKind.Object, socio.ValueKind);
+			Assert.Equal("E92000001", socio.GetProperty("area_code").GetString());
+			Assert.Equal(JsonValueKind.Number, socio.GetProperty("total_population").ValueKind);
+			return;
+		}
+	}
 }

@@ -250,14 +250,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	/// The response is keyed by country name; each country carries its <c>country_code</c> and a list of regions,
 	/// each region (keyed by region name) carries its <c>region_code</c> and a list of <c>{ district_name, district_code }</c> entries.
 	/// Districts whose region is null are attached directly to the country under a <c>districts</c> list.
+	/// </remarks>
 	/// <param name="publisher">One or more publisher names.</param>
 	/// <param name="activity">One or more activity/facility labels. A row matches if any of the supplied values is present. Accepts a single value (<c>?activity=Yoga</c>) or multiple values (<c>?activity=Yoga&amp;activity=Pilates</c> or comma-separated <c>?activity=Yoga,Pilates</c>).</param>
 	/// <param name="organization">One or more organization names.</param>
 	/// <param name="nhs_trust">One or more NHS trust codes. A row matches if any of the supplied values is present.</param>
-	/// </remarks>
+	/// <param name="socio">When <c>true</c>, each country/region/district node is enriched with socio-economic context (population, deprivation, Active Lives) joined on the area's ONS code. When omitted or <c>false</c>, the <c>socio</c> field is present on every node but null.</param>
 	[HttpGet("areas")]
 	[ProducesResponseType(typeof(Dictionary<string, object>), StatusCodes.Status200OK)]
-	public async Task<IActionResult> Areas([FromQuery] string[]? publisher = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhs_trust = null)
+	public async Task<IActionResult> Areas([FromQuery] string[]? publisher = null, [FromQuery] string[]? activity = null, [FromQuery] string[]? organization = null, [FromQuery] string[]? nhs_trust = null, [FromQuery] bool socio = false)
 	{
 		var conditions = new List<string>();
 		var parameters = new List<BigQueryParameter>();
@@ -314,9 +315,46 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			districtsByRegion[key].Add(district);
 		}
 
-		static IEnumerable<object> SortedDistricts(List<(string Name, string? Code)> list) =>
+		// Optionally join socio-economic context on the ONS code shared by district_code / region_code / country_code.
+		// When socio=false the lookup stays empty, so every node still carries a (null) socio field.
+		var socioByCode = new Dictionary<string, SocioRecord>();
+		if (socio)
+		{
+			var allCodes = new HashSet<string>();
+			foreach (var code in countryCodes.Values)
+			{
+				if (code is not null) allCodes.Add(code);
+			}
+			foreach (var code in regionCodes.Values)
+			{
+				if (code is not null) allCodes.Add(code);
+			}
+			foreach (var list in districtsByRegion.Values)
+			{
+				foreach (var d in list)
+				{
+					if (d.Code is not null) allCodes.Add(d.Code);
+				}
+			}
+			foreach (var list in districtsByCountry.Values)
+			{
+				foreach (var d in list)
+				{
+					if (d.Code is not null) allCodes.Add(d.Code);
+				}
+			}
+
+			socioByCode = await LoadSocio(allCodes);
+		}
+
+		IEnumerable<object> SortedDistricts(List<(string Name, string? Code)> list) =>
 			list.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-				.Select(d => new { district_name = d.Name, district_code = d.Code });
+				.Select(d => new
+				{
+					district_name = d.Name,
+					district_code = d.Code,
+					socio = d.Code is not null ? socioByCode.GetValueOrDefault(d.Code) : null,
+				});
 
 		var result = new Dictionary<string, object>();
 		foreach (var country in countryCodes.Keys.OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
@@ -325,19 +363,23 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			foreach (var region in regionsByCountry[country].OrderBy(r => r, StringComparer.OrdinalIgnoreCase))
 			{
 				var key = (country, region);
+				var regionCode = regionCodes[key];
 				regions.Add(new Dictionary<string, object>
 				{
 					[region] = new
 					{
-						region_code = regionCodes[key],
+						region_code = regionCode,
+						socio = regionCode is not null ? socioByCode.GetValueOrDefault(regionCode) : null,
 						districts = SortedDistricts(districtsByRegion[key]),
 					},
 				});
 			}
 
+			var countryCode = countryCodes[country];
 			var countryNode = new Dictionary<string, object?>
 			{
-				["country_code"] = countryCodes[country],
+				["country_code"] = countryCode,
+				["socio"] = countryCode is not null ? socioByCode.GetValueOrDefault(countryCode) : null,
 				["regions"] = regions,
 			};
 
@@ -351,6 +393,55 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		}
 
 		return Ok(result);
+	}
+
+	/// <summary>
+	/// Socio-economic context
+	/// </summary>
+	/// <remarks>
+	/// Returns socio-economic context per area, keyed by ONS geography code (<c>area_code</c>), which matches
+	/// the <c>district_code</c>, <c>region_code</c> and <c>country_code</c> used elsewhere in the API.
+	/// <c>total_population</c> is available for all areas; deprivation (<c>imd25_*</c>) and Active Lives (<c>als_*</c>)
+	/// metrics are England-only and are null for other areas and for aggregate (county/region/country) rows.
+	/// When no parameters are supplied, every area is returned. Supplied <c>district</c>, <c>region</c> and
+	/// <c>country</c> values are matched against <c>area_code</c> (combined with OR).
+	/// </remarks>
+	/// <param name="district">One or more local authority district (LAD) codes.</param>
+	/// <param name="region">One or more region codes.</param>
+	/// <param name="country">One or more country codes.</param>
+	[HttpGet("socio")]
+	[ProducesResponseType(typeof(IEnumerable<SocioRecord>), StatusCodes.Status200OK)]
+	public async Task<ActionResult<IEnumerable<SocioRecord>>> Socio([FromQuery] string[]? district = null, [FromQuery] string[]? region = null, [FromQuery] string[]? country = null)
+	{
+		var codes = NormaliseMultiValue(district)
+			.Concat(NormaliseMultiValue(region))
+			.Concat(NormaliseMultiValue(country))
+			.Distinct()
+			.ToList();
+
+		var conditions = new List<string>();
+		var parameters = new List<BigQueryParameter>();
+
+		if (codes.Count > 0)
+		{
+			conditions.Add("area_code IN UNNEST(@codes)");
+			parameters.Add(new BigQueryParameter("codes", BigQueryDbType.Array, codes) { ArrayElementType = BigQueryDbType.String });
+		}
+
+		var where = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT *
+			FROM {Fq(Tables.SocioData)}
+			{where}
+			ORDER BY area_name
+			""",
+			parameters
+		);
+
+		var records = await rows.Select(SocioRecord.FromBigQueryRow).ToListAsync();
+		return Ok(records);
 	}
 
 	/// <summary>
@@ -643,6 +734,34 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	#endregion
 
 	#region Utilities
+
+	private async Task<Dictionary<string, SocioRecord>> LoadSocio(IReadOnlyCollection<string> codes)
+	{
+		var result = new Dictionary<string, SocioRecord>();
+		if (codes.Count == 0) return result;
+
+		var parameters = new List<BigQueryParameter>
+		{
+			new("codes", BigQueryDbType.Array, codes.ToList()) { ArrayElementType = BigQueryDbType.String },
+		};
+
+		var rows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
+			$"""
+			SELECT *
+			FROM {Fq(Tables.SocioData)}
+			WHERE area_code IN UNNEST(@codes)
+			""",
+			parameters
+		);
+
+		await foreach (var row in rows)
+		{
+			var record = SocioRecord.FromBigQueryRow(row);
+			result[record.AreaCode] = record;
+		}
+
+		return result;
+	}
 
 	private static void AddLocationFilters(List<string> conditions, List<BigQueryParameter> parameters, string[]? district, string[]? region, string[]? country)
 	{

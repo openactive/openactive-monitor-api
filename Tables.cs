@@ -7,4 +7,5 @@ internal static class Tables
 	public const string Feeds = "feeds";
 	public const string Opportunities = "opportunities";
 	public const string FeedQuality = "feed_quality";
+	public const string SocioData = "socio_data";
 }

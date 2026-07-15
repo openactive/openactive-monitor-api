@@ -42,6 +42,9 @@ Once the application is running, the following endpoints will be available:
 ```text
 http://localhost:5268/summary?token=
 http://localhost:5268/areas?token=
+http://localhost:5268/areas?socio=true&token=
+http://localhost:5268/socio?token=
+http://localhost:5268/socio?district=E09000003&token=
 http://localhost:5268/publishers?token=
 http://localhost:5268/publishers?district=E09000003&token=
 http://localhost:5268/activities?token=
@@ -92,6 +95,10 @@ The `activity` filter accepts either a single value (`?activity=Yoga`) or multip
   }
 }
 ```
+
+Every country/region/district node also carries a `socio` field. It is `null` unless `?socio=true` is supplied, in which case it holds the socio-economic context (population, deprivation, Active Lives) for that area's ONS code — see `/socio` below.
+
+`/socio` returns socio-economic context per area, keyed by ONS geography code (`area_code`, which matches `district_code`/`region_code`/`country_code`). It accepts optional `district`, `region`, and `country` filters (matched against `area_code`, OR-combined). `total_population` is available for all areas; deprivation (`imd25_*`) and Active Lives (`als_*`) metrics are England-only and null elsewhere.
 
 ## Deployment
 
