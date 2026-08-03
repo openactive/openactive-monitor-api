@@ -60,22 +60,21 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		);
 		var opportunitiesCount = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT COUNT(*) AS n
-			FROM {Fq(Tables.Opportunities)}
-			WHERE startDate >= TIMESTAMP(CURRENT_DATE()) AND district_name IS NOT NULL AND district_name != '' AND publisher_name IS NOT NULL AND publisher_name != ''
+			SELECT SUM(opportunity_count) AS n
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			"""
 		);
 		var publisherRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT COUNT(DISTINCT dataset_url) AS n
-			FROM {Fq(Tables.Feeds)}
+			SELECT COUNT(DISTINCT publisher) AS n
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			"""
 		);
 		var activityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
 			SELECT COUNT(DISTINCT JSON_VALUE(a)) AS n
-			FROM {Fq(Tables.Opportunities)} AS o,
-			     UNNEST(JSON_EXTRACT_ARRAY(o.activity)) AS a
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o,
+			     UNNEST(JSON_EXTRACT_ARRAY(o.activity_or_facility)) AS a
 			WHERE JSON_VALUE(a) IS NOT NULL
 			"""
 		);
@@ -89,8 +88,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		);
 		var activityProviderRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT COUNT(DISTINCT organization_name) AS n
-			FROM {Fq(Tables.Opportunities)}
+			SELECT COUNT(DISTINCT JSON_VALUE(f)) AS n
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o,
+				UNNEST(JSON_EXTRACT_ARRAY(o.organization_names)) AS f
+			WHERE JSON_VALUE(f) IS NOT NULL
 			"""
 		);
 		var facilityUseRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
