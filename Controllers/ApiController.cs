@@ -52,7 +52,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	{
 		var insightRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT total_num_future_opportunity_items AS n, run_date
+			SELECT total_num_future_opportunity_items_narrow AS n, run_date
 			FROM {Fq(Tables.InsightRunSummary)}
 			ORDER BY run_date DESC
 			LIMIT 1
@@ -60,7 +60,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		);
 		var opportunitiesCount = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
-			SELECT SUM(opportunity_count) AS n
+			SELECT SUM(opportunity_count_narrow) AS n
 			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
 			"""
 		);
@@ -75,15 +75,15 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			SELECT COUNT(DISTINCT JSON_VALUE(a)) AS n
 			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o,
 			     UNNEST(JSON_EXTRACT_ARRAY(o.activity_or_facility)) AS a
-			WHERE JSON_VALUE(a) IS NOT NULL
+			WHERE is_activity = TRUE AND JSON_VALUE(a) IS NOT NULL
 			"""
 		);
 		var facilityRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$"""
 			SELECT COUNT(DISTINCT JSON_VALUE(f)) AS n
-			FROM {Fq(Tables.Opportunities)} AS o,
-			     UNNEST(JSON_EXTRACT_ARRAY(o.facility)) AS f
-			WHERE JSON_VALUE(f) IS NOT NULL
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o,
+			     UNNEST(JSON_EXTRACT_ARRAY(o.activity_or_facility)) AS f
+			WHERE is_activity = FALSE AND JSON_VALUE(f) IS NOT NULL
 			"""
 		);
 		var activityProviderRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
@@ -96,9 +96,9 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		);
 		var facilityUseRows = (IAsyncEnumerable<Dictionary<string, object>>)await Execute(
 			$$"""
-			SELECT COUNT(*) AS n
-			FROM {{Fq(Tables.Opportunities)}}
-			WHERE (kind = "IndividualFacilityUse" OR kind = "FacilityUse") AND TO_JSON_STRING(location) != "{}"
+			SELECT SUM(opportunity_count_narrow) AS n
+			FROM {{Fq(Tables.ActiveOpportunitiesSummary)}}
+			WHERE is_activity = FALSE
 			"""
 		);
 
@@ -158,8 +158,9 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 
 		return Execute(
 			$"""
-			SELECT *
-			FROM {Fq(Tables.ActiveOpportunitiesSummary)}
+			SELECT o.* EXCEPT(opportunity_count, opportunity_count_narrow),
+			       o.opportunity_count_narrow AS opportunity_count
+			FROM {Fq(Tables.ActiveOpportunitiesSummary)} AS o
 			{where}
 			""",
 			parameters
@@ -205,6 +206,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 			"startDate >= TIMESTAMP(CURRENT_DATE())",
 			"district_name IS NOT NULL AND district_name != ''",
 			"publisher_name IS NOT NULL AND publisher_name != ''",
+			"kind IS NOT NULL AND kind != 'Slot'",
 		};
 		var parameters = new List<BigQueryParameter>();
 
