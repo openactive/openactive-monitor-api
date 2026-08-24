@@ -24,6 +24,18 @@ public class OpportunitiesEndpointTests(ApiFixture fixture) : IClassFixture<ApiF
 	}
 
 	[Fact]
+	public async Task NoFilters_ReturnsNarrowOpportunityCountAsOpportunityCount()
+	{
+		var json = await Get("");
+		if (json.GetArrayLength() == 0) return;
+
+		var row = json[0];
+		Assert.True(row.TryGetProperty("opportunity_count", out var count), "Row is missing opportunity_count.");
+		Assert.Equal(JsonValueKind.Number, count.ValueKind);
+		Assert.False(row.TryGetProperty("opportunity_count_narrow", out _), "Row should not expose opportunity_count_narrow.");
+	}
+
+	[Fact]
 	public async Task PublisherFilter_AllRowsHaveThatPublisher()
 	{
 		var unfiltered = await Get("");
