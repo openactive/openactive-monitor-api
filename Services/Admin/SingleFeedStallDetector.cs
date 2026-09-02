@@ -46,7 +46,7 @@ public static class SingleFeedStallDetector
 				continue;
 			}
 
-			incidents.Add(stall with { Trend = TrendFor(feed, stall.LastPublished, asOf, thresholds) });
+			incidents.Add(stall with { Trend = TrendFor(feed, asOf, thresholds) });
 		}
 
 		return incidents
@@ -158,36 +158,29 @@ public static class SingleFeedStallDetector
 	}
 
 	/// <summary>
-	/// Silent-day counts for <em>this</em> incident over the trailing trend window, oldest first.
+	/// The feed's daily <c>updated</c> counts over the trailing trend window, oldest first — the raw
+	/// ingestion numbers, so the dashboard can see the drop-off that led to the incident.
 	/// </summary>
 	/// <remarks>
-	/// Days are skipped unless they belong to the same silence as the incident — a feed that recovered
-	/// and stalled again inside the window must not have the earlier, already-closed episode spliced
-	/// onto this incident's trend. With that restriction the series is always strictly increasing.
+	/// Always exactly <see cref="SingleFeedStallThresholds.IncidentTrendDays"/> entries ending at
+	/// <paramref name="asOf"/>, so entry <c>i</c> is always the same day for every incident in a
+	/// response and a chart can align them. Days are not filtered by whether the incident was open:
+	/// the pre-stall activity is the point of the column. A <c>null</c> entry means no ingestion run was
+	/// recorded that day; a zero means the feed was polled and published nothing.
 	/// </remarks>
-	private static IReadOnlyList<int> TrendFor(
+	private static IReadOnlyList<long?> TrendFor(
 		FeedIngestionHistory feed,
-		DateOnly lastPublished,
 		DateOnly asOf,
 		SingleFeedStallThresholds thresholds)
 	{
-		var trend = new List<int>(thresholds.IncidentTrendDays);
+		var trend = new List<long?>(thresholds.IncidentTrendDays);
 
 		for (var offset = thresholds.IncidentTrendDays - 1; offset >= 0; offset--)
 		{
 			var day = asOf.AddDays(-offset);
-
-			// A different last-publish day means this day sits in a different silence.
-			if (LastPublishOnOrBefore(feed.PublishedDays, day) != lastPublished)
-			{
-				continue;
-			}
-
-			var silentDays = day.DayNumber - lastPublished.DayNumber;
-			if (silentDays >= thresholds.StallDays)
-			{
-				trend.Add(silentDays);
-			}
+			trend.Add(feed.RecentUpdated is not null && feed.RecentUpdated.TryGetValue(day, out var updated)
+				? updated
+				: null);
 		}
 
 		return trend;

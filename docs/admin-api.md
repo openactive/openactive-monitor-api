@@ -81,8 +81,10 @@ Two rules are worth knowing:
 | `page_size` | `500` | Rows per page, capped at 1000 |
 | `lookback_days` | `120` | How recently a feed must have published to count as live rather than retired |
 | `stall_days` | `5` | Consecutive silent days that open an incident |
-| `past_threshold_days` | `14` | Consecutive silent days that set `past_threshold`; never treated as looser than `stall_days` |
+| `past_threshold_days` | `7` | Consecutive silent days that set `past_threshold`; never treated as looser than `stall_days` |
 | `as_of` | latest ingestion day | Evaluate as at this date (`yyyy-MM-dd`) instead of the snapshot date |
+
+The `trend` column always covers the trailing ten days, independently of `lookback_days`.
 
 ```json
 {
@@ -96,10 +98,10 @@ Two rules are worth knowing:
   "first_detected": "2026-08-20",
   "days_open": 12,
   "consecutive_days": 12,
-  "past_threshold": false,
+  "past_threshold": true,
   "status": "open",
   "last_contacted": null,
-  "trend": [6, 7, 8, 9, 10, 11, 12],
+  "trend": [0, 16, 0, 0, 0, 0, 0, 0, 0, 0],
   "detail": { "last_modified": "2026-08-20" },
   "quality_score": null
 }
@@ -111,12 +113,21 @@ Field notes:
 - `feed_name` is the last path segment of the feed URL.
 - `first_detected` is the day the feed went quiet — its last publishing day — which is also
   `detail.last_modified`.
+- `past_threshold` is `true` once `days_open` reaches `past_threshold_days`, which defaults to **7**.
+  Every incident is open for at least `stall_days` (5), so the flag separates incidents in their first
+  week of silence from those that have gone past it.
 - `days_open` and `consecutive_days` always agree under the current model: an incident opens the day
   the feed goes quiet and closes when it publishes again. They would diverge only once incidents are
   tracked and resolved independently of the raw signal.
-- `trend` is this incident's silent-day counts over the trailing week, oldest first, and is therefore
-  strictly increasing. A feed that recovered and stalled again inside that week contributes only its
-  current silence.
+- `trend` is the feed's daily `updated` count from `opportunity_ingestion` over the trailing **ten
+  days**, oldest first, ending on `snapshot_date`. It is always ten entries whatever the age of the
+  incident, so entry *i* is the same day for every incident in the response and the column lines up as
+  a sparkline. It is not filtered by whether the incident was open — the pre-stall activity is the
+  point, so `[0, 16, 0, 0, 0, 0, 0, 0, 0, 0]` reads as "published 16 items nine days ago, nothing
+  since".
+  - `0` — the feed was polled that day and published nothing.
+  - `null` — no ingestion row for that day at all, so nothing is known. Not the same as zero.
+  - Multiple ingestion runs on one day are summed.
 - `status` is always `open` and `last_contacted` always `null`. Outreach states such as
   `awaiting_reply` need an incident-tracking store, which does not exist yet.
 - `quality_score` comes from `feed_quality.score` and is `null` for feeds that have not been assessed
@@ -139,9 +150,9 @@ plus:
 ```json
 {
   "data": [
-    { "date": "2026-08-30", "open_count": 123, "past_threshold_count": 0 },
-    { "date": "2026-08-31", "open_count": 124, "past_threshold_count": 0 },
-    { "date": "2026-09-01", "open_count": 126, "past_threshold_count": 0 }
+    { "date": "2026-08-30", "open_count": 123, "past_threshold_count": 118 },
+    { "date": "2026-08-31", "open_count": 124, "past_threshold_count": 117 },
+    { "date": "2026-09-01", "open_count": 126, "past_threshold_count": 119 }
   ],
   "meta": { "snapshot_date": "2026-09-01", "generated_at": "2026-09-02T11:09:01Z", "page": 1, "page_size": 500, "total": 30 }
 }
@@ -157,10 +168,11 @@ collapsed into one day.
 remembering when reading the numbers:
 
 - The 120-day lookback is aspirational — it can only see as far back as the table goes.
-- `past_threshold` at the default 14 days is empty until the table has more than 14 days of history.
-  Pass `past_threshold_days=10` to see the flag exercised today.
-- Trend points earlier than `stall_days` after the first day of data necessarily read zero: no feed
-  can yet be shown to have been silent that long.
+- Trend points read zero for the first `stall_days` (and `past_threshold_count` for the first
+  `past_threshold_days`) after the earliest day of data: no feed can yet be *shown* to have been silent
+  that long. With the current 12-day table, `past_threshold_count` is zero before 2026-08-27.
+- Most open incidents are currently past threshold — 119 of 126 — because the bulk of them date back
+  to the first day of data. Expect that proportion to fall as history accumulates.
 
 ## Tests
 

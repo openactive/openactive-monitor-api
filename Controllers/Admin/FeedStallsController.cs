@@ -35,7 +35,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// <param name="page_size">Rows per page. Default <c>500</c>, capped at <c>1000</c>.</param>
 	/// <param name="lookback_days">How recently a feed must have published to count as live rather than retired. Default <c>120</c>.</param>
 	/// <param name="stall_days">Consecutive silent days that open an incident. Default <c>5</c>.</param>
-	/// <param name="past_threshold_days">Consecutive silent days that set <c>past_threshold</c>. Default <c>14</c>; never treated as looser than <c>stall_days</c>.</param>
+	/// <param name="past_threshold_days">Consecutive silent days that set <c>past_threshold</c>. Default <c>7</c>; never treated as looser than <c>stall_days</c>.</param>
 	/// <param name="as_of">Evaluate as at this date instead of the latest day in the ingestion table. ISO <c>yyyy-MM-dd</c>.</param>
 	[HttpGet("single-feed-stall-incidents")]
 	[ProducesResponseType(typeof(AdminPage<StallIncident>), StatusCodes.Status200OK)]
@@ -44,7 +44,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		int page_size = DefaultPageSize,
 		int lookback_days = 120,
 		int stall_days = 5,
-		int past_threshold_days = 14,
+		int past_threshold_days = 7,
 		[FromQuery] DateOnly? as_of = null)
 	{
 		var thresholds = BuildThresholds(lookback_days, stall_days, past_threshold_days, trendDays: null);
@@ -55,7 +55,10 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			return Ok(Paginate(Array.Empty<StallIncident>(), page, page_size, as_of ?? DateOnly.FromDateTime(DateTime.UtcNow)));
 		}
 
-		var histories = await LoadHistories(snapshotDate.Value, thresholds.LookbackDays + thresholds.IncidentTrendDays);
+		var histories = await LoadHistories(
+			snapshotDate.Value,
+			thresholds.LookbackDays + thresholds.IncidentTrendDays,
+			thresholds.IncidentTrendDays);
 		var stalls = SingleFeedStallDetector.Detect(histories, snapshotDate.Value, thresholds);
 
 		var metadata = await LoadFeedMetadata(stalls.Select(s => s.FeedId).ToList());
@@ -81,7 +84,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// <param name="trend_days">Days of history to return. Default <c>30</c>.</param>
 	/// <param name="lookback_days">How recently a feed must have published to count as live rather than retired. Default <c>120</c>.</param>
 	/// <param name="stall_days">Consecutive silent days that open an incident. Default <c>5</c>.</param>
-	/// <param name="past_threshold_days">Consecutive silent days counted into <c>past_threshold_count</c>. Default <c>14</c>.</param>
+	/// <param name="past_threshold_days">Consecutive silent days counted into <c>past_threshold_count</c>. Default <c>7</c>.</param>
 	/// <param name="as_of">Evaluate as at this date instead of the latest day in the ingestion table. ISO <c>yyyy-MM-dd</c>.</param>
 	[HttpGet("single-feed-stall-trend")]
 	[ProducesResponseType(typeof(AdminPage<StallTrendPoint>), StatusCodes.Status200OK)]
@@ -91,7 +94,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		int trend_days = 30,
 		int lookback_days = 120,
 		int stall_days = 5,
-		int past_threshold_days = 14,
+		int past_threshold_days = 7,
 		[FromQuery] DateOnly? as_of = null)
 	{
 		var thresholds = BuildThresholds(lookback_days, stall_days, past_threshold_days, trend_days);
@@ -102,7 +105,10 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			return Ok(Paginate(Array.Empty<StallTrendPoint>(), page, page_size, as_of ?? DateOnly.FromDateTime(DateTime.UtcNow)));
 		}
 
-		var histories = await LoadHistories(snapshotDate.Value, thresholds.RequiredHistoryDays);
+		var histories = await LoadHistories(
+			snapshotDate.Value,
+			thresholds.RequiredHistoryDays,
+			thresholds.IncidentTrendDays);
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate.Value, thresholds);
 
 		var points = trend
@@ -150,11 +156,20 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			: null;
 	}
 
-	private async Task<List<FeedIngestionHistory>> LoadHistories(DateOnly snapshotDate, int historyDays)
+	/// <param name="snapshotDate">The day the analysis runs against; the window ends here.</param>
+	/// <param name="historyDays">Days of publishing history to load for detection.</param>
+	/// <param name="trendDays">
+	/// Trailing days for which the daily <c>updated</c> counts are also loaded, to fill the per-incident
+	/// trend column.
+	/// </param>
+	private async Task<List<FeedIngestionHistory>> LoadHistories(DateOnly snapshotDate, int historyDays, int trendDays)
 	{
 		var rows = await Query(
 			IngestionHistoryQuery.HistorySql(Fq(Tables.OpportunityIngestion)),
-			IngestionHistoryQuery.HistoryParameters(snapshotDate.AddDays(-historyDays), snapshotDate));
+			IngestionHistoryQuery.HistoryParameters(
+				snapshotDate.AddDays(-historyDays),
+				snapshotDate,
+				snapshotDate.AddDays(-(trendDays - 1))));
 
 		return await rows.Select(IngestionHistoryQuery.ParseHistory).ToListAsync();
 	}

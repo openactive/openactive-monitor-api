@@ -42,8 +42,13 @@ public sealed class StallIncident
 	/// <summary>Always <c>null</c> until contact tracking exists. See <see cref="Status"/>.</summary>
 	public required DateOnly? LastContacted { get; init; }
 
-	/// <summary>Silent-day counts over the trailing week, oldest first.</summary>
-	public required IReadOnlyList<int> Trend { get; init; }
+	/// <summary>
+	/// The feed's daily <c>updated</c> counts over the trailing ten days, oldest first, ending on the
+	/// snapshot date. Always ten entries, so entry <c>i</c> is the same day for every incident in the
+	/// response. <c>null</c> means no ingestion run was recorded that day; <c>0</c> means the feed was
+	/// polled and published nothing.
+	/// </summary>
+	public required IReadOnlyList<long?> Trend { get; init; }
 
 	public required StallIncidentDetail Detail { get; init; }
 

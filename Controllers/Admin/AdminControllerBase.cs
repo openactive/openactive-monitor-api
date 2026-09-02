@@ -114,6 +114,10 @@ public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOpti
 		page = Math.Max(1, page);
 		pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
+		// Read the clock once: truncating with two separate DateTime.UtcNow reads can straddle a tick
+		// boundary and leave the sub-second component intact.
+		var now = DateTime.UtcNow;
+
 		return new AdminPage<T>
 		{
 			Data = rows.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
@@ -121,9 +125,7 @@ public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOpti
 			{
 				SnapshotDate = snapshotDate,
 				// Truncated to whole seconds so the payload matches the documented ISO-8601 shape.
-				GeneratedAt = new DateTime(
-					DateTime.UtcNow.Ticks - (DateTime.UtcNow.Ticks % TimeSpan.TicksPerSecond),
-					DateTimeKind.Utc),
+				GeneratedAt = new DateTime(now.Ticks - (now.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc),
 				Page = page,
 				PageSize = pageSize,
 				Total = rows.Count,

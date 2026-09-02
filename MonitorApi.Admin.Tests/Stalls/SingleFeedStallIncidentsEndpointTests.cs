@@ -61,15 +61,40 @@ public class SingleFeedStallIncidentsEndpointTests(AdminApiFixture fixture) : IC
 			Assert.Equal(incident.ConsecutiveDays, incident.DaysOpen);
 			Assert.Equal(incident.DaysOpen, page.Meta.SnapshotDate.DayNumber - incident.FirstDetected.DayNumber);
 
-			// Default thresholds: open at five days, escalated at fourteen.
+			// Default thresholds: open at five days, escalated at seven.
 			Assert.True(incident.DaysOpen >= 5);
 			Assert.True(incident.DaysOpen <= 120);
-			Assert.Equal(incident.DaysOpen >= 14, incident.PastThreshold);
+			Assert.Equal(incident.DaysOpen >= 7, incident.PastThreshold);
 
-			Assert.NotEmpty(incident.Trend);
-			Assert.Equal(incident.ConsecutiveDays, incident.Trend[^1]);
-			Assert.Equal(incident.Trend.Order(), incident.Trend);
+			// trend is the trailing ten days of raw "updated" counts, so it is a fixed length whatever
+			// the age of the incident, and every value is either absent or a non-negative count.
+			Assert.Equal(10, incident.Trend.Count);
+			Assert.All(incident.Trend, value => Assert.True(value is null || value >= 0));
 		});
+	}
+
+	[Fact]
+	public async Task TrendIsAlignedAcrossIncidentsAndShowsTheStallAsZeroes()
+	{
+		var page = await Get("?page_size=1000");
+
+		// Every incident covers the same ten days, so the arrays line up column-for-column in the UI.
+		Assert.All(page.Data, incident => Assert.Equal(10, incident.Trend.Count));
+
+		// An incident is by definition silent for the last stall_days, so the final entries cannot be
+		// positive: the feed either published nothing (0) or was not polled (null).
+		Assert.All(page.Data, incident =>
+			Assert.All(incident.Trend.TakeLast(Math.Min(5, incident.DaysOpen)), value =>
+				Assert.True(value is null or 0, $"{incident.FeedId} published {value} while stalled")));
+	}
+
+	[Fact]
+	public async Task IncidentTrendDaysWorthOfCountsAreLoadedEvenForALongLookback()
+	{
+		// The trend window is independent of the detection window.
+		var page = await Get("?lookback_days=365");
+
+		Assert.All(page.Data, incident => Assert.Equal(10, incident.Trend.Count));
 	}
 
 	[Fact]

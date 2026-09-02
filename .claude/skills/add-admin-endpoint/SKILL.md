@@ -106,3 +106,7 @@ routes). With 30+ endpoints planned, one controller per monitor family, not per 
 - `opportunity_ingestion` holds only ~12 days of history, with gaps and same-day duplicate runs.
   Collapse duplicates in SQL, treat a missing day as "no evidence of publishing" rather than a
   publish, and never write a test that assumes a long history.
+- Keep "no row for that day" distinct from "a row saying zero" in anything per-day you return — one is
+  unknown, the other is a real measurement. `StallIncident.Trend` models that as `long?`.
+- A fixed-length per-day array (rather than one that skips days) lets the dashboard align rows into a
+  sparkline. Pad with `null`, don't compress.

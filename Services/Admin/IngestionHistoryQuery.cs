@@ -20,6 +20,12 @@ internal static class IngestionHistoryQuery
 	/// collapsed into one day, and a day counts as published only when the feed reported at least one
 	/// updated item that day.
 	/// </summary>
+	/// <remarks>
+	/// Returns two aggregates per feed at different scopes, so the wide detection window does not have
+	/// to carry a value per day: <c>published_days</c> spans the whole window and drives detection, while
+	/// <c>recent</c> spans only <c>@trend_start</c> onwards and carries the daily <c>updated</c> counts
+	/// used for the per-incident trend column.
+	/// </remarks>
 	public static string HistorySql(string ingestionTable) =>
 		$"""
 		WITH daily AS (
@@ -34,16 +40,24 @@ internal static class IngestionHistoryQuery
 		SELECT feed_id,
 		       ANY_VALUE(dataset_id) AS dataset_id,
 		       ARRAY_AGG(IF(updated > 0, FORMAT_DATE('%F', ingestion_day), NULL) IGNORE NULLS
-		                 ORDER BY ingestion_day) AS published_days
+		                 ORDER BY ingestion_day) AS published_days,
+		       ARRAY_AGG(IF(ingestion_day >= @trend_start,
+		                    STRUCT(FORMAT_DATE('%F', ingestion_day) AS day, IFNULL(updated, 0) AS updated),
+		                    NULL) IGNORE NULLS
+		                 ORDER BY ingestion_day) AS recent
 		FROM daily
 		WHERE feed_id IS NOT NULL AND dataset_id IS NOT NULL
 		GROUP BY feed_id
 		""";
 
-	public static IReadOnlyList<BigQueryParameter> HistoryParameters(DateOnly windowStart, DateOnly windowEnd) =>
+	public static IReadOnlyList<BigQueryParameter> HistoryParameters(
+		DateOnly windowStart,
+		DateOnly windowEnd,
+		DateOnly trendStart) =>
 	[
 		new BigQueryParameter("window_start", BigQueryDbType.Date, windowStart.ToDateTime(TimeOnly.MinValue)),
 		new BigQueryParameter("window_end", BigQueryDbType.Date, windowEnd.ToDateTime(TimeOnly.MinValue)),
+		new BigQueryParameter("trend_start", BigQueryDbType.Date, trendStart.ToDateTime(TimeOnly.MinValue)),
 	];
 
 	/// <summary>Latest day present in the ingestion table — the snapshot date the monitors report against.</summary>
@@ -75,7 +89,41 @@ internal static class IngestionHistoryQuery
 		new(
 			(string)row["feed_id"],
 			(string)row["dataset_id"],
-			ParseDays(row.GetValueOrDefault("published_days")));
+			ParseDays(row.GetValueOrDefault("published_days")),
+			ParseRecentUpdated(row.GetValueOrDefault("recent")));
+
+	/// <summary>
+	/// Parses the repeated <c>STRUCT&lt;day STRING, updated INT64&gt;</c> into daily updated counts. The
+	/// BigQuery client surfaces a repeated struct as <c>Dictionary&lt;string, object&gt;[]</c>.
+	/// </summary>
+	private static IReadOnlyDictionary<DateOnly, long> ParseRecentUpdated(object? cell)
+	{
+		var updatedByDay = new Dictionary<DateOnly, long>();
+
+		if (cell is not System.Collections.IEnumerable rows || cell is string)
+		{
+			return updatedByDay;
+		}
+
+		foreach (var item in rows)
+		{
+			if (item is not IDictionary<string, object> fields)
+			{
+				continue;
+			}
+
+			var day = ParseDay(fields.TryGetValue("day", out var rawDay) ? rawDay : null);
+			if (day is null)
+			{
+				continue;
+			}
+
+			updatedByDay[day.Value] =
+				BigQueryValueParser.AsLong(fields.TryGetValue("updated", out var rawUpdated) ? rawUpdated : null) ?? 0;
+		}
+
+		return updatedByDay;
+	}
 
 	public static FeedMetadata ParseFeedMetadata(Dictionary<string, object> row) =>
 		new(
@@ -107,12 +155,7 @@ internal static class IngestionHistoryQuery
 
 		foreach (var item in items)
 		{
-			if (item is DateTime dateTime)
-			{
-				days.Add(DateOnly.FromDateTime(dateTime));
-			}
-			else if (item?.ToString() is { Length: > 0 } text &&
-				DateOnly.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var day))
+			if (ParseDay(item) is { } day)
 			{
 				days.Add(day);
 			}
@@ -121,4 +164,13 @@ internal static class IngestionHistoryQuery
 		days.Sort();
 		return days;
 	}
+
+	private static DateOnly? ParseDay(object? value) => value switch
+	{
+		DateTime dateTime => DateOnly.FromDateTime(dateTime),
+		DateOnly day => day,
+		not null when value.ToString() is { Length: > 0 } text &&
+			DateOnly.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+		_ => null,
+	};
 }

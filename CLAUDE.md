@@ -92,5 +92,5 @@ fixtures, docs, or terminal output. `appsettings.json` holds empty placeholder k
 
 `opportunity_ingestion` currently holds only ~12 days of history (from 2026-08-20), with one day
 missing and one duplicated. Anything reasoning over longer windows — the admin stall monitors' 120-day
-lookback, their 14-day escalation threshold — is correct in code but cannot yet be exercised by the
-data. Never assert on absolute counts or long histories in a test.
+lookback in particular — is correct in code but cannot yet be exercised by the data. Never assert on
+absolute counts or long histories in a test.

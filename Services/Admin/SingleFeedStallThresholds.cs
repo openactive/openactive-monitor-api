@@ -15,13 +15,16 @@ public sealed record SingleFeedStallThresholds
 	public int StallDays { get; init; } = 5;
 
 	/// <summary>Consecutive silent days after which an open incident is flagged as past threshold.</summary>
-	public int PastThresholdDays { get; init; } = 14;
+	public int PastThresholdDays { get; init; } = 7;
 
 	/// <summary>Days of history returned by the trend endpoint.</summary>
 	public int TrendDays { get; init; } = 30;
 
-	/// <summary>Length of the per-incident <c>trend</c> array.</summary>
-	public int IncidentTrendDays { get; init; } = 7;
+	/// <summary>
+	/// Length of the per-incident <c>trend</c> array — how many trailing days of <c>updated</c> counts
+	/// each incident reports.
+	/// </summary>
+	public int IncidentTrendDays { get; init; } = 10;
 
 	/// <summary>
 	/// Days of ingestion history the queries must load to answer a request with these thresholds:

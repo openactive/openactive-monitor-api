@@ -18,8 +18,11 @@ public sealed record SingleFeedStall
 	/// <summary>Whether <see cref="ConsecutiveDays"/> has reached the past-threshold limit.</summary>
 	public required bool PastThreshold { get; init; }
 
-	/// <summary>Silent-day counts over the trailing trend window, oldest first.</summary>
-	public required IReadOnlyList<int> Trend { get; init; }
+	/// <summary>
+	/// Daily <c>updated</c> counts over the trailing trend window, oldest first. A <c>null</c> entry
+	/// means no ingestion run recorded that day; a zero means the feed was polled and published nothing.
+	/// </summary>
+	public required IReadOnlyList<long?> Trend { get; init; }
 }
 
 /// <summary>One day of the single-feed stall trend.</summary>

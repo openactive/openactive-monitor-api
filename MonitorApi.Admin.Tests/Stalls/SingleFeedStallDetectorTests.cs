@@ -11,18 +11,48 @@ public class SingleFeedStallDetectorTests
 {
 	private static readonly DateOnly AsOf = new(2026, 9, 1);
 
-	private static readonly SingleFeedStallThresholds Defaults = new()
-	{
-		LookbackDays = 120,
-		StallDays = 5,
-		PastThresholdDays = 14,
-		TrendDays = 30,
-		IncidentTrendDays = 7,
-	};
+	/// <summary>
+	/// The production defaults. Taken from the record rather than restated here, so these tests exercise
+	/// whatever the API actually serves; <see cref="ProductionDefaults_AreTheDocumentedValues"/> pins the
+	/// values themselves.
+	/// </summary>
+	private static readonly SingleFeedStallThresholds Defaults = new();
 
-	/// <summary>A feed that published on each of the given days, offset back from <see cref="AsOf"/>.</summary>
+	[Fact]
+	public void ProductionDefaults_AreTheDocumentedValues()
+	{
+		Assert.Equal(120, Defaults.LookbackDays);
+		Assert.Equal(5, Defaults.StallDays);
+		Assert.Equal(7, Defaults.PastThresholdDays);
+		Assert.Equal(30, Defaults.TrendDays);
+		Assert.Equal(10, Defaults.IncidentTrendDays);
+	}
+
+	/// <summary>
+	/// A feed that published on each of the given days, offset back from <see cref="AsOf"/>. The only
+	/// ingestion rows it is given are those publishing days, each with an updated count of one, so its
+	/// history is self-consistent.
+	/// </summary>
 	private static FeedIngestionHistory Feed(string feedId, string datasetId, params int[] daysAgo) =>
-		new(feedId, datasetId, daysAgo.Select(d => AsOf.AddDays(-d)).OrderBy(d => d).ToList());
+		FeedWithUpdated(feedId, datasetId, daysAgo.Select(d => (d, 1L)).ToArray());
+
+	/// <summary>
+	/// A feed with an explicit ingestion row per given day: <c>(daysAgo, updated)</c>. Days not listed
+	/// have no ingestion row at all, which is distinct from a listed day whose updated count is zero.
+	/// </summary>
+	private static FeedIngestionHistory FeedWithUpdated(
+		string feedId,
+		string datasetId,
+		params (int DaysAgo, long Updated)[] rows)
+	{
+		var updatedByDay = rows.ToDictionary(r => AsOf.AddDays(-r.DaysAgo), r => r.Updated);
+
+		return new FeedIngestionHistory(
+			feedId,
+			datasetId,
+			updatedByDay.Where(kv => kv.Value > 0).Select(kv => kv.Key).Order().ToList(),
+			updatedByDay);
+	}
 
 	#region Detection
 
@@ -167,8 +197,8 @@ public class SingleFeedStallDetectorTests
 	{
 		var feeds = new[]
 		{
-			Feed("just-open", "d1", 13),
-			Feed("escalated", "d1", 14),
+			Feed("just-open", "d1", 6),
+			Feed("escalated", "d1", 7),
 			Feed("healthy", "d1", 0),
 		};
 
@@ -214,61 +244,102 @@ public class SingleFeedStallDetectorTests
 	}
 
 	[Fact]
-	public void IncidentTrend_IsTheTrailingSilentDayCountsEndingAtToday()
+	public void IncidentTrend_ReportsOneDailyUpdatedCountPerTrendDayOldestFirst()
 	{
-		var feeds = new[] { Feed("f1", "d1", 22), Feed("healthy", "d1", 0) };
+		// Active until five days ago, then polled every day but publishing nothing.
+		var feed = FeedWithUpdated("f1", "d1",
+			(9, 400), (8, 300), (7, 200), (6, 100), (5, 50),
+			(4, 0), (3, 0), (2, 0), (1, 0), (0, 0));
 
-		var incident = Assert.Single(SingleFeedStallDetector.Detect(feeds, AsOf, Defaults));
+		var incident = Assert.Single(SingleFeedStallDetector.Detect([feed, Feed("healthy", "d1", 0)], AsOf, Defaults));
 
-		Assert.Equal([16, 17, 18, 19, 20, 21, 22], incident.Trend);
-		Assert.Equal(incident.ConsecutiveDays, incident.Trend[^1]);
+		long?[] expected = [400, 300, 200, 100, 50, 0, 0, 0, 0, 0];
+
+		Assert.Equal(10, incident.Trend.Count);
+		Assert.Equal(expected, incident.Trend);
 	}
 
 	[Fact]
-	public void IncidentTrend_SkipsDaysBeforeTheIncidentOpened()
+	public void IncidentTrend_DistinguishesADayWithNoIngestionRunFromADayThatPublishedNothing()
 	{
-		// Silent for six days, so only the days at or past the five-day threshold appear.
-		var feeds = new[] { Feed("f1", "d1", 6), Feed("healthy", "d1", 0) };
+		// Day 3 was polled and published nothing; day 2 has no ingestion row at all.
+		var feed = FeedWithUpdated("f1", "d1", (5, 50), (4, 0), (3, 0), (1, 0), (0, 0));
 
-		var incident = Assert.Single(SingleFeedStallDetector.Detect(feeds, AsOf, Defaults));
+		var incident = Assert.Single(SingleFeedStallDetector.Detect([feed, Feed("healthy", "d1", 0)], AsOf, Defaults));
 
-		Assert.Equal([5, 6], incident.Trend);
+		long?[] expected = [null, null, null, null, 50, 0, 0, null, 0, 0];
+
+		Assert.Equal(expected, incident.Trend);
 	}
 
 	[Fact]
-	public void IncidentTrend_ExcludesAnEarlierSilenceThatAlreadyRecovered()
+	public void IncidentTrend_CoversTheWholeWindowIncludingDaysBeforeTheIncidentOpened()
 	{
-		// Published 6 days ago (ending a long earlier silence) and again 5 days ago, then went quiet.
-		// The trend must describe only the current 5-day silence, not the earlier closed one.
-		var feeds = new[] { Feed("f1", "d1", 5, 6, 20), Feed("healthy", "d1", 0) };
+		// The pre-stall activity is the point of the column, so it is not filtered out — unlike the
+		// silent-day series this replaced, which only started once the incident was open.
+		var feed = FeedWithUpdated("f1", "d1", (6, 999), (5, 0), (4, 0), (3, 0), (2, 0), (1, 0), (0, 0));
 
-		var incident = Assert.Single(SingleFeedStallDetector.Detect(feeds, AsOf, Defaults));
+		var incident = Assert.Single(SingleFeedStallDetector.Detect([feed, Feed("healthy", "d1", 0)], AsOf, Defaults));
 
-		Assert.Equal(5, incident.ConsecutiveDays);
-		Assert.Equal([5], incident.Trend);
+		Assert.Equal(6, incident.ConsecutiveDays);
+		Assert.Equal(999, incident.Trend[3]);
+		Assert.All(incident.Trend.Skip(4), value => Assert.Equal(0, value));
 	}
 
 	[Fact]
-	public void IncidentTrend_IsAlwaysStrictlyIncreasing()
+	public void IncidentTrend_IsTheSameLengthAndAlignmentForEveryIncident()
 	{
 		var feeds = new[]
 		{
-			Feed("recovered-then-stalled", "d1", 5, 6, 20),
-			Feed("long-running", "d1", 22),
-			Feed("just-opened", "d1", 5),
+			FeedWithUpdated("long-running", "d1", (22, 10), (1, 0), (0, 0)),
+			FeedWithUpdated("just-opened", "d1", (5, 7), (4, 0), (0, 0)),
 			Feed("healthy", "d1", 0),
 		};
 
 		var incidents = SingleFeedStallDetector.Detect(feeds, AsOf, Defaults);
 
-		Assert.NotEmpty(incidents);
-		Assert.All(incidents, incident =>
+		// Oldest first and ending at the snapshot, so a day N days ago sits at index (length - 1 - N)
+		// in every incident's array regardless of how old the incident is.
+		int IndexOf(int daysAgo) => Defaults.IncidentTrendDays - 1 - daysAgo;
+
+		Assert.Equal(2, incidents.Count);
+		Assert.All(incidents, incident => Assert.Equal(Defaults.IncidentTrendDays, incident.Trend.Count));
+
+		var longRunning = incidents.Single(i => i.FeedId == "long-running");
+		var justOpened = incidents.Single(i => i.FeedId == "just-opened");
+
+		Assert.Equal(0, longRunning.Trend[IndexOf(0)]);
+		Assert.Equal(0, justOpened.Trend[IndexOf(0)]);
+		Assert.Equal(7, justOpened.Trend[IndexOf(5)]);
+		// The long-running incident had no ingestion row that day at all.
+		Assert.Null(longRunning.Trend[IndexOf(5)]);
+	}
+
+	[Fact]
+	public void IncidentTrend_LengthFollowsIncidentTrendDays()
+	{
+		var feed = FeedWithUpdated("f1", "d1", (9, 5), (5, 0), (0, 0));
+
+		var incident = Assert.Single(
+			SingleFeedStallDetector.Detect([feed, Feed("healthy", "d1", 0)], AsOf, Defaults with { IncidentTrendDays = 3 }));
+
+		Assert.Equal(3, incident.Trend.Count);
+	}
+
+	[Fact]
+	public void IncidentTrend_IsAllNullWhenNoRecentCountsWereLoaded()
+	{
+		// The trend endpoint builds histories without the recent counts; detection must still work.
+		var feeds = new[]
 		{
-			Assert.NotEmpty(incident.Trend);
-			Assert.Equal(incident.Trend.Order(), incident.Trend);
-			Assert.Equal(incident.Trend.Distinct(), incident.Trend);
-			Assert.Equal(incident.ConsecutiveDays, incident.Trend[^1]);
-		});
+			new FeedIngestionHistory("f1", "d1", [AsOf.AddDays(-9)]),
+			Feed("healthy", "d1", 0),
+		};
+
+		var incident = Assert.Single(SingleFeedStallDetector.Detect(feeds, AsOf, Defaults));
+
+		Assert.Equal(10, incident.Trend.Count);
+		Assert.All(incident.Trend, Assert.Null);
 	}
 
 	#endregion
