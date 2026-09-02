@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="MonitorApi.csproj" />
   <Project Path="MonitorApi.Tests/MonitorApi.Tests.csproj" />
+  <Project Path="MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj" />
 </Solution>

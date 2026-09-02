@@ -31,6 +31,7 @@ jobs:
           PROJECT_ID: ${{ secrets.BIGQUERY_PROJECT_ID }}
           DATASET_ID: ${{ secrets.BIGQUERY_DATASET_ID }}
           ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}
         run: |
           cat > appsettings.Development.json <<EOF
           {
@@ -40,10 +41,14 @@ jobs:
               "Credentials": "${{ env.CREDENTIALS_FILE }}"
             },
             "Api": {
-              "AccessToken": "$ACCESS_TOKEN"
+              "AccessToken": "$ACCESS_TOKEN",
+              "AdminToken": "$ADMIN_TOKEN"
             }
           }
           EOF
 
-      - name: Run tests
+      - name: Run analytics API tests
         run: dotnet test MonitorApi.Tests/MonitorApi.Tests.csproj --configuration Release
+
+      - name: Run admin API tests
+        run: dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj --configuration Release

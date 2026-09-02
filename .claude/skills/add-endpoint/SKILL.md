@@ -5,6 +5,9 @@ description: Add or modify an endpoint on the OpenActive Monitor API — control
 
 # Adding an endpoint
 
+**This is the public analytics API.** For a route under `/admin`, use the `add-admin-endpoint` skill
+instead — that surface has its own token, base controller, response envelope and test project.
+
 Everything lives in `Controllers/ApiController.cs`. There is no service layer, no repository and
 no separate controller per route — resist adding one unless asked.
 
@@ -92,6 +95,10 @@ no separate controller per route — resist adding one unless asked.
 
 ## Reminders
 
+- **Every public method on `ApiController` is a route unless marked `[NonAction]`.** A public helper
+  with no route attribute inherits the controller's `[Route("/")]` template and makes requests to `/`
+  ambiguous. Keep helpers `private` (as the existing ones are), or mark them `[NonAction]`.
+  `MonitorApi.Tests/RoutingTests.cs` pins this.
 - The whole controller is under `[OutputCache(PolicyName = "FourHours")]`, keyed by all query
   parameters — a manual re-check of a changed response can return a cached body.
 - The `token` query parameter participates in cache keys and is checked in `OnActionExecuting`;

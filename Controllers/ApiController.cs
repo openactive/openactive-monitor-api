@@ -20,6 +20,10 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 	protected BigQueryOptions options = options.Value;
 	protected ApiOptions apiOptions = apiOptions.Value;
 
+	// [NonAction] is required: these are public methods on a controller, so without it MVC treats them
+	// as actions. Having no route template of their own they inherit the controller's ("/"), which makes
+	// every request to "/" an AmbiguousMatchException.
+	[NonAction]
 	public void OnActionExecuting(ActionExecutingContext context)
 	{
 		// All services are protected by a simple access token for now, to prevent abuse. The token is passed as a query parameter.
@@ -33,6 +37,7 @@ public class ApiController(IOptions<BigQueryOptions> options, IOptions<ApiOption
 		}
 	}
 
+	[NonAction]
 	public void OnActionExecuted(ActionExecutedContext context)
 	{
 	}

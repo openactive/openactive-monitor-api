@@ -7,7 +7,7 @@
     <UserSecretsId>d118d7f8-00c6-4225-9102-4b701d5c6037</UserSecretsId>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <DefaultItemExcludes>$(DefaultItemExcludes);MonitorApi.Tests/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);MonitorApi.Tests/**;MonitorApi.Admin.Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
