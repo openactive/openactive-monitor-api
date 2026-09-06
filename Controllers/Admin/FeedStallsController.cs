@@ -10,7 +10,7 @@ namespace MonitorApi.Controllers.Admin;
 /// quiet. Every endpoint requires the admin token as the <c>token</c> query parameter.
 /// </summary>
 public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOptions<ApiOptions> apiOptions)
-	: AdminControllerBase(bigQueryOptions, apiOptions)
+	: MonitorControllerBase(bigQueryOptions, apiOptions)
 {
 	/// <summary>
 	/// Single Feed Stall Incidents
@@ -29,7 +29,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// <c>status</c> is always <c>open</c> and <c>last_contacted</c> is always <c>null</c>: outreach
 	/// state needs an incident-tracking store, which does not exist yet.
 	///
-	/// Results are cached for fifteen minutes, varying by all query parameters.
+	/// Results are cached until the next daily refresh, varying by all query parameters.
 	/// </remarks>
 	/// <param name="page">One-based page number. Default <c>1</c>.</param>
 	/// <param name="page_size">Rows per page. Default <c>500</c>, capped at <c>1000</c>.</param>
@@ -77,7 +77,7 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// that endpoint would have reported on that day. <c>past_threshold_count</c> is always a subset of
 	/// <c>open_count</c>.
 	///
-	/// Results are cached for fifteen minutes, varying by all query parameters.
+	/// Results are cached until the next daily refresh, varying by all query parameters.
 	/// </remarks>
 	/// <param name="page">One-based page number. Default <c>1</c>.</param>
 	/// <param name="page_size">Rows per page. Default <c>500</c>, capped at <c>1000</c>.</param>
@@ -137,41 +137,6 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		return trendDays is null
 			? thresholds
 			: thresholds with { TrendDays = Math.Clamp(trendDays.Value, 1, 365) };
-	}
-
-	/// <summary>
-	/// The day to evaluate against: the caller's <c>as_of</c>, else the latest day in the ingestion
-	/// table. Returns <c>null</c> when the table is empty.
-	/// </summary>
-	private async Task<DateOnly?> ResolveSnapshotDate(DateOnly? asOf)
-	{
-		if (asOf is not null)
-		{
-			return asOf;
-		}
-
-		var row = await QuerySingle(IngestionHistoryQuery.SnapshotDateSql(Fq(Tables.OpportunityIngestion)));
-		return row?.GetValueOrDefault("snapshot_date") is DateTime snapshot
-			? DateOnly.FromDateTime(snapshot)
-			: null;
-	}
-
-	/// <param name="snapshotDate">The day the analysis runs against; the window ends here.</param>
-	/// <param name="historyDays">Days of publishing history to load for detection.</param>
-	/// <param name="trendDays">
-	/// Trailing days for which the daily <c>updated</c> counts are also loaded, to fill the per-incident
-	/// trend column.
-	/// </param>
-	private async Task<List<FeedIngestionHistory>> LoadHistories(DateOnly snapshotDate, int historyDays, int trendDays)
-	{
-		var rows = await Query(
-			IngestionHistoryQuery.HistorySql(Fq(Tables.OpportunityIngestion)),
-			IngestionHistoryQuery.HistoryParameters(
-				snapshotDate.AddDays(-historyDays),
-				snapshotDate,
-				snapshotDate.AddDays(-(trendDays - 1))));
-
-		return await rows.Select(IngestionHistoryQuery.ParseHistory).ToListAsync();
 	}
 
 	private async Task<Dictionary<string, FeedMetadata>> LoadFeedMetadata(IReadOnlyCollection<string> feedIds)

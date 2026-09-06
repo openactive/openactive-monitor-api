@@ -12,6 +12,7 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 
 	public static TheoryData<string> AdminRoutes() =>
 	[
+		"/admin/summary",
 		"/admin/single-feed-stall-incidents",
 		"/admin/single-feed-stall-trend",
 	];

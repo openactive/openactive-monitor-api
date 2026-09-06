@@ -51,7 +51,9 @@ routes). With 30+ endpoints planned, one controller per monitor family, not per 
 
 2. **Envelope.** Every admin endpoint returns `AdminPage<T>` via the inherited `Paginate` helper, which
    clamps `page` to ≥1 and `page_size` to 1–1000 and fills `meta`. Never hand-roll the envelope, and
-   never return a bare array — the dashboard paginates every endpoint identically.
+   never return a bare array — the dashboard paginates every endpoint identically. An endpoint whose
+   answer is one object rather than a list returns `AdminDocument<T>` via `Document(...)`, which carries
+   the identical `meta` with the paging fields fixed at one row on one page.
 
    `meta.snapshot_date` is the day the data describes (usually `MAX(DATE(...))` from the source table),
    **not** today. Resolve it from the data and let `as_of` override it.
@@ -101,8 +103,8 @@ routes). With 30+ endpoints planned, one controller per monitor family, not per 
   boots. Don't "fix" that with `[Required]`; it would break startup and CI.
 - Columns that are `NULL` are **absent** from the row dictionary — use `row.GetValueOrDefault(...)` and
   the `BigQueryValueParser` helpers, not `row[...]`.
-- Responses are cached for fifteen minutes varying by all query parameters; a manual re-check of a
-  changed response can return a cached body.
+- Responses are cached until 07:00 UTC daily, varying by all query parameters (`DailyRefreshCachePolicy`);
+  a manual re-check of a changed response returns the cached body until the app restarts.
 - `opportunity_ingestion` holds only ~12 days of history, with gaps and same-day duplicate runs.
   Collapse duplicates in SQL, treat a missing day as "no evidence of publishing" rather than a
   publish, and never write a test that assumes a long history.

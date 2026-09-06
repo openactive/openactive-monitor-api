@@ -19,6 +19,7 @@ All data is read from configured BigQuery tables in the configured project + dat
 A separate `/admin` surface serves the admin dashboard, authenticated with its own token
 (`Api:AdminToken`) and returning a paginated `{ data, meta }` envelope:
 
+- `GET /admin/summary`: dashboard landing figures — monitored estate, current issues, per-monitor counts
 - `GET /admin/single-feed-stall-incidents`: feeds that were publishing recently but have gone quiet
 - `GET /admin/single-feed-stall-trend`: daily open/past-threshold stall counts
 

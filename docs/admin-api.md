@@ -9,13 +9,14 @@ analytics endpoints documented in [development.md](development.md):
 | Token          | `Api:AccessToken`             | `Api:AdminToken`                    |
 | Controller     | `Controllers/ApiController.cs` | `Controllers/Admin/*`               |
 | Response shape | bare arrays / objects         | `{ "data": [...], "meta": {...} }`  |
-| Output cache   | 4 hours                       | 15 minutes                          |
+| Output cache   | 4 hours                       | until 07:00 UTC daily               |
 | Tests          | `MonitorApi.Tests`            | `MonitorApi.Admin.Tests`            |
 
 The two tokens are **not** interchangeable in either direction. If `Api:AdminToken` is not configured,
 every admin endpoint refuses every request — it never falls back to the public token.
 
 ```text
+http://localhost:5268/admin/summary?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-incidents?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-trend?token=<AdminToken>
 ```
@@ -51,10 +52,86 @@ Every admin endpoint returns the same envelope, so the dashboard can paginate an
 ```
 
 - `snapshot_date` — the day the analysis ran against: the latest day present in the source table, not
-  today. Data lags by up to a day, so these differ routinely.
+  today. Data lags by up to a day, so these differ routinely. (`/admin/summary` is the exception: its
+  snapshot is the day of `generated_at`, the latest `feed_ingestion` run.)
 - `total` — rows across all pages, before paging.
 - `page` is one-based; `page_size` defaults to 500 and is capped at 1000. Out-of-range values are
   clamped rather than rejected.
+
+`/admin/summary` answers with a single object rather than a list, so its `data` is that object and its
+paging fields are fixed at `page: 1, page_size: 1, total: 1`. The `meta` keys are the same either way.
+
+## Caching
+
+Admin responses are held in the output cache until **07:00 UTC**, then discarded, whatever time of day
+they were stored. The monitors describe one ingestion day at a time and those numbers do not move again
+until the overnight pipeline has landed, so a fixed sliding window would either serve yesterday's
+figures past the refresh or re-scan the ingestion history for nothing.
+
+Entries vary by the full query string, so changing any parameter (including the token) is a separate
+entry. Only `200` responses are cached — a `403` from a bad token is not. **When checking a change by
+hand, expect the previous body**: restart the app, or vary a parameter, to force a fresh query.
+
+## Endpoints
+
+### `GET /admin/summary`
+
+The dashboard's landing figures: the size of the monitored estate, how much of it is currently
+unhealthy, and one line per monitor. Takes no parameters.
+
+```json
+{
+  "data": {
+    "publishers_monitored": 179,
+    "publishers_with_issues": 0,
+    "open_incidents": null,
+    "past_threshold": null,
+    "feeds": 463,
+    "datasets": 179,
+    "monitors": [
+      {
+        "monitor_id": "single_feed_stall",
+        "count": 126,
+        "past_threshold_count": 119,
+        "sparkline": [126, 127, 125, 122, 123, 124, 126]
+      }
+    ],
+    "publishers_with_issues_delta": 2,
+    "open_incidents_delta": null,
+    "past_threshold_delta": 2
+  },
+  "meta": {
+    "snapshot_date": "2026-09-01",
+    "generated_at": "2026-09-01T00:00:27Z",
+    "page": 1,
+    "page_size": 1,
+    "total": 1
+  }
+}
+```
+
+Field notes:
+
+- `publishers_monitored`, `datasets` and `feeds` come from the latest `feed_ingestion` row, which also
+  supplies `meta.generated_at`; `meta.snapshot_date` is that timestamp's day. One dataset is one
+  publisher, so `publishers_monitored` and `datasets` always agree.
+- `publishers_with_issues` is the number of distinct datasets with at least one `ERROR` row in
+  `opportunity_ingestion` dated **today** — failures in today's run, not a running total. Before the
+  day's pipeline has run it is legitimately `0`.
+- `monitors` carries one entry per monitor, evaluated at the latest day in `opportunity_ingestion` with
+  that monitor's default thresholds. `count` therefore equals the `meta.total` of the monitor's own
+  incidents endpoint called without arguments, and `sparkline` is the last seven `open_count` values
+  from its trend endpoint, oldest first, so `sparkline[^1] == count`. It is shorter than seven entries
+  only when less history exists, and is never padded.
+  - That day is the *ingestion* table's latest day and can differ from `meta.snapshot_date`, which dates
+    the coverage figures from `feed_ingestion`.
+- `publishers_with_issues_delta` and `past_threshold_delta` are day-on-day changes in the monitors'
+  `count` and `past_threshold_count`, summed across `monitors` — the latest day minus the previous one.
+  Positive means the estate got worse. Both are `null` when no monitor has a previous day to compare
+  against; a monitor that individually lacks one is skipped rather than counted as zero.
+- `open_incidents`, `past_threshold` and `open_incidents_delta` are always `null`. Incidents are derived
+  per request rather than tracked, so there is no cross-monitor total to report; read the per-monitor
+  figures in `monitors` instead.
 
 ## Monitors
 
@@ -179,12 +256,15 @@ remembering when reading the numbers:
 ```bash
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj
 
-# just the detection rules — no BigQuery credentials needed
+# just the pure rules and arithmetic — no BigQuery credentials needed
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~SingleFeedStallDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~MonitorSummariesTests"
 ```
 
-The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`, deliberately free of BigQuery
-and ASP.NET types, and are pinned by deterministic unit tests against hand-written histories. The
+The detection rules live in `Services/Admin/SingleFeedStallDetector.cs` and the summary arithmetic in
+`Services/Admin/MonitorSummaries.cs`, both deliberately free of BigQuery and ASP.NET types, and pinned
+by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live
 data looks like on the day.

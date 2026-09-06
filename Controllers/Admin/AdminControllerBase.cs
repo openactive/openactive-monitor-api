@@ -17,7 +17,7 @@ namespace MonitorApi.Controllers.Admin;
 /// </remarks>
 [Route("admin")]
 [ApiController]
-[OutputCache(PolicyName = "FifteenMinutes")]
+[OutputCache(PolicyName = DailyRefreshCachePolicy.PolicyName)]
 // Puts every derived controller in the "admin" OpenAPI document instead of the public one.
 [ApiExplorerSettings(GroupName = ApiDocuments.AdminGroupName)]
 public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOptions, IOptions<ApiOptions> apiOptions)
@@ -114,22 +114,44 @@ public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOpti
 		page = Math.Max(1, page);
 		pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
-		// Read the clock once: truncating with two separate DateTime.UtcNow reads can straddle a tick
-		// boundary and leave the sub-second component intact.
-		var now = DateTime.UtcNow;
-
 		return new AdminPage<T>
 		{
 			Data = rows.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-			Meta = new AdminPageMeta
-			{
-				SnapshotDate = snapshotDate,
-				// Truncated to whole seconds so the payload matches the documented ISO-8601 shape.
-				GeneratedAt = new DateTime(now.Ticks - (now.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc),
-				Page = page,
-				PageSize = pageSize,
-				Total = rows.Count,
-			},
+			Meta = Meta(snapshotDate, generatedAt: null, page, pageSize, total: rows.Count),
+		};
+	}
+
+	/// <summary>
+	/// Wraps a single object in the same envelope, with the paging fields fixed at one row on one page.
+	/// For endpoints whose answer is one document rather than a list.
+	/// </summary>
+	/// <param name="data">The document to return.</param>
+	/// <param name="snapshotDate">The day the figures describe.</param>
+	/// <param name="generatedAt">
+	/// When the figures were computed, if the data itself dates them; <c>null</c> to use the current
+	/// time as the paged endpoints do.
+	/// </param>
+	protected static AdminDocument<T> Document<T>(T data, DateOnly snapshotDate, DateTime? generatedAt = null) =>
+		new()
+		{
+			Data = data,
+			Meta = Meta(snapshotDate, generatedAt, page: 1, pageSize: 1, total: 1),
+		};
+
+	private static AdminPageMeta Meta(DateOnly snapshotDate, DateTime? generatedAt, int page, int pageSize, int total)
+	{
+		// Read the clock once: truncating with two separate DateTime.UtcNow reads can straddle a tick
+		// boundary and leave the sub-second component intact.
+		var stamp = generatedAt ?? DateTime.UtcNow;
+
+		return new AdminPageMeta
+		{
+			SnapshotDate = snapshotDate,
+			// Truncated to whole seconds so the payload matches the documented ISO-8601 shape.
+			GeneratedAt = new DateTime(stamp.Ticks - (stamp.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc),
+			Page = page,
+			PageSize = pageSize,
+			Total = total,
 		};
 	}
 }

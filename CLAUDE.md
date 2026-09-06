@@ -19,7 +19,7 @@ The project serves two independent consumers. Know which one you are working on 
 | Token | `Api:AccessToken` | `Api:AdminToken` |
 | Code | `Controllers/ApiController.cs` | `Controllers/Admin/*` |
 | Responses | bare arrays / objects | `{ data, meta }` envelope |
-| Output cache | 4 hours | 15 minutes |
+| Output cache | 4 hours | until 07:00 UTC daily |
 | OpenAPI document | `/openapi/v1.json`, `/scalar/v1` | `/openapi/admin.json`, `/scalar/admin` |
 | Tests | `MonitorApi.Tests` | `MonitorApi.Admin.Tests` |
 
