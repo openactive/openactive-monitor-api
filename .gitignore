@@ -8,5 +8,7 @@ appsettings.Development.json
 /obj
 MonitorApi.Tests/bin
 MonitorApi.Tests/obj
+MonitorApi.Admin.Tests/bin
+MonitorApi.Admin.Tests/obj
 
 *.user
