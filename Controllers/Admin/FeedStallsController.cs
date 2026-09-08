@@ -58,7 +58,8 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var histories = await LoadHistories(
 			snapshotDate.Value,
 			thresholds.LookbackDays + thresholds.IncidentTrendDays,
-			thresholds.IncidentTrendDays);
+			thresholds.IncidentTrendDays,
+			ignoreFirstIngestionDate: true);
 		var stalls = SingleFeedStallDetector.Detect(histories, snapshotDate.Value, thresholds);
 
 		var metadata = await LoadFeedMetadata(stalls.Select(s => s.FeedId).ToList());
@@ -108,7 +109,8 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var histories = await LoadHistories(
 			snapshotDate.Value,
 			thresholds.RequiredHistoryDays,
-			thresholds.IncidentTrendDays);
+			thresholds.IncidentTrendDays,
+			ignoreFirstIngestionDate: true);
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate.Value, thresholds);
 
 		var points = trend

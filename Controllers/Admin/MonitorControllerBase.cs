@@ -39,10 +39,14 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 	/// Trailing days for which the daily <c>updated</c> counts are also loaded, to fill the per-incident
 	/// trend column.
 	/// </param>
-	protected async Task<List<FeedIngestionHistory>> LoadHistories(DateOnly snapshotDate, int historyDays, int trendDays)
+	/// <param name="ignoreFirstIngestionDate">
+	/// When set, drops the earliest <c>ingestion_date</c> in the table so the initial bulk data load is
+	/// not counted as a day the feeds published.
+	/// </param>
+	protected async Task<List<FeedIngestionHistory>> LoadHistories(DateOnly snapshotDate, int historyDays, int trendDays, bool ignoreFirstIngestionDate = false)
 	{
 		var rows = await Query(
-			IngestionHistoryQuery.HistorySql(Fq(Tables.OpportunityIngestion)),
+			IngestionHistoryQuery.HistorySql(Fq(Tables.OpportunityIngestion), ignoreFirstIngestionDate),
 			IngestionHistoryQuery.HistoryParameters(
 				snapshotDate.AddDays(-historyDays),
 				snapshotDate,

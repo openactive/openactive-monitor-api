@@ -26,29 +26,42 @@ internal static class IngestionHistoryQuery
 	/// <c>recent</c> spans only <c>@trend_start</c> onwards and carries the daily <c>updated</c> counts
 	/// used for the per-incident trend column.
 	/// </remarks>
-	public static string HistorySql(string ingestionTable) =>
-		$"""
-		WITH daily AS (
-		  SELECT feed_id,
-		         dataset_id,
-		         DATE(ingestion_date) AS ingestion_day,
-		         SUM(updated) AS updated
-		  FROM {ingestionTable}
-		  WHERE DATE(ingestion_date) BETWEEN @window_start AND @window_end
-		  GROUP BY feed_id, dataset_id, ingestion_day
-		)
-		SELECT feed_id,
-		       ANY_VALUE(dataset_id) AS dataset_id,
-		       ARRAY_AGG(IF(updated > 0, FORMAT_DATE('%F', ingestion_day), NULL) IGNORE NULLS
-		                 ORDER BY ingestion_day) AS published_days,
-		       ARRAY_AGG(IF(ingestion_day >= @trend_start,
-		                    STRUCT(FORMAT_DATE('%F', ingestion_day) AS day, IFNULL(updated, 0) AS updated),
-		                    NULL) IGNORE NULLS
-		                 ORDER BY ingestion_day) AS recent
-		FROM daily
-		WHERE feed_id IS NOT NULL AND dataset_id IS NOT NULL
-		GROUP BY feed_id
-		""";
+	/// <param name="ingestionTable">Fully qualified <c>opportunity_ingestion</c> table name.</param>
+	/// <param name="ignoreFirstIngestionDate">
+	/// When set, drops rows on the earliest <c>ingestion_date</c> in the table so the initial bulk data
+	/// load is not counted as a day the feeds published.
+	/// </param>
+	public static string HistorySql(string ingestionTable, bool ignoreFirstIngestionDate = false)
+	{
+		var firstDateFilter = ignoreFirstIngestionDate
+			? $"AND DATE(ingestion_date) > (SELECT MIN(DATE(ingestion_date)) FROM {ingestionTable})"
+			: "";
+
+		return
+			$"""
+			WITH daily AS (
+			  SELECT feed_id,
+			         dataset_id,
+			         DATE(ingestion_date) AS ingestion_day,
+			         SUM(updated) AS updated
+			  FROM {ingestionTable}
+			  WHERE DATE(ingestion_date) BETWEEN @window_start AND @window_end
+			        {firstDateFilter}
+			  GROUP BY feed_id, dataset_id, ingestion_day
+			)
+			SELECT feed_id,
+			       ANY_VALUE(dataset_id) AS dataset_id,
+			       ARRAY_AGG(IF(updated > 0, FORMAT_DATE('%F', ingestion_day), NULL) IGNORE NULLS
+			                 ORDER BY ingestion_day) AS published_days,
+			       ARRAY_AGG(IF(ingestion_day >= @trend_start,
+			                    STRUCT(FORMAT_DATE('%F', ingestion_day) AS day, IFNULL(updated, 0) AS updated),
+			                    NULL) IGNORE NULLS
+			                 ORDER BY ingestion_day) AS recent
+			FROM daily
+			WHERE feed_id IS NOT NULL AND dataset_id IS NOT NULL
+			GROUP BY feed_id
+			""";
+	}
 
 	public static IReadOnlyList<BigQueryParameter> HistoryParameters(
 		DateOnly windowStart,

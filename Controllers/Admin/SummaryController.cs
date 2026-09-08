@@ -122,7 +122,8 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 		var histories = await LoadHistories(
 			snapshotDate,
 			thresholds.RequiredHistoryDays,
-			thresholds.IncidentTrendDays);
+			thresholds.IncidentTrendDays,
+			ignoreFirstIngestionDate: true);
 
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate, thresholds)
 			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
