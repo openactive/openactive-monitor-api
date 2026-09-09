@@ -54,4 +54,24 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 
 		return await rows.Select(IngestionHistoryQuery.ParseHistory).ToListAsync();
 	}
+
+	/// <summary>
+	/// Loads per-feed daily ingestion status for the window the error monitors need — the sibling of
+	/// <see cref="LoadHistories"/> for monitors that detect on the outcome of each run rather than on
+	/// how much it published.
+	/// </summary>
+	/// <param name="snapshotDate">The day the analysis runs against; the window ends here.</param>
+	/// <param name="historyDays">Days of status history to load before <paramref name="snapshotDate"/>.</param>
+	/// <remarks>
+	/// The earliest ingestion date is kept, unlike in <see cref="LoadHistories"/>: the initial bulk load
+	/// inflates what a feed published that day, but the status it reported is a real ingestion outcome.
+	/// </remarks>
+	protected async Task<List<FeedStatusHistory>> LoadStatusHistories(DateOnly snapshotDate, int historyDays)
+	{
+		var rows = await Query(
+			IngestionStatusQuery.StatusHistorySql(Fq(Tables.OpportunityIngestion)),
+			IngestionStatusQuery.StatusHistoryParameters(snapshotDate.AddDays(-historyDays), snapshotDate));
+
+		return await rows.Select(IngestionStatusQuery.ParseStatusHistory).ToListAsync();
+	}
 }

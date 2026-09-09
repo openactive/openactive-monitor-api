@@ -19,6 +19,8 @@ every admin endpoint refuses every request — it never falls back to the public
 http://localhost:5268/admin/summary?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-incidents?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-trend?token=<AdminToken>
+http://localhost:5268/admin/feed-ingestion-error-incidents?token=<AdminToken>
+http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
 ```
 
 ## API reference
@@ -94,6 +96,12 @@ unhealthy, and one line per monitor. Takes no parameters.
         "count": 126,
         "past_threshold_count": 119,
         "sparkline": [126, 127, 125, 122, 123, 124, 126]
+      },
+      {
+        "monitor_id": "feed_ingestion_error",
+        "count": 6,
+        "past_threshold_count": 1,
+        "sparkline": [1, 2, 1, 1, 6, 1, 6]
       }
     ],
     "publishers_with_issues_delta": 2,
@@ -235,21 +243,152 @@ plus:
 }
 ```
 
+### `GET /admin/feed-ingestion-error-incidents`
+
+Feeds whose ingestion is failing now but was completing recently, ordered longest-failing first.
+
+A feed raises an incident when its ingestion **failed on the snapshot day** and it **completed at least
+once in the `success_lookback_days` days before it**. A day counts as failed when the feed's
+`opportunity_ingestion` rows for that day report `ERROR` and none of them report `COMPLETE`.
+
+The rules worth knowing:
+
+- **Success wins within a day.** A feed polled twice, once failing and once completing, counts as
+  completed: it did deliver. `WARNING` is also a successful ingestion, not a failure.
+- **Days with no ingestion run are not evidence of failure.** A pipeline gap cannot open an incident —
+  that silence is the stall monitor's business — but it does count towards `days_open`, which measures
+  days since the last *completed* ingestion.
+- **Feeds that have not completed within `success_lookback_days` are left out** as permanently broken
+  rather than newly failing. This is the bulk of the exclusion: on 2026-09-09, 32 feeds failed and only
+  8 of them had completed inside the window.
+- **Authorisation failures are left out.** A failure whose `error_code` is `401` or `403` is a
+  credentials problem rather than a broken feed and gets its own monitor. There is no way to turn this
+  off; the codes are fixed in `FeedIngestionErrorDetector.AuthErrorCodes`.
+- **No dataset-wide exclusion**, unlike the stall monitor. A publisher whose whole estate fails on one
+  day is exactly what this monitor should surface, and the shared `error_code` across its feeds is the
+  evidence for it.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `success_lookback_days` | `15` | How recently the feed must have completed an ingestion for its current failure to count as a regression |
+| `error_days` | `1` | Days of failure that open an incident; at the default a single failing day is enough |
+| `past_threshold_days` | `3` | Days of failure that set `past_threshold`; never treated as looser than `error_days` |
+| `as_of` | latest ingestion day | Evaluate as at this date (`yyyy-MM-dd`) instead of the snapshot date |
+
+The `trend` column always covers the trailing ten days, independently of `success_lookback_days`.
+
+```json
+{
+  "monitor_id": "feed_ingestion_error",
+  "publisher_id": "pub_find-my-facility",
+  "publisher_name": "Find My Facility",
+  "feed_id": "api-findmyfacility-com-v1-openactive-sessionSeries",
+  "feed_name": "sessionSeries",
+  "feed_type": "SessionSeries",
+  "feed_url": "https://api.findmyfacility.com/v1/openactive/sessionSeries",
+  "first_detected": "2026-09-02",
+  "days_open": 8,
+  "consecutive_days": 8,
+  "past_threshold": true,
+  "status": "open",
+  "last_contacted": null,
+  "trend": [0, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+  "detail": {
+    "error_code": "500",
+    "error_message": "HTTP 500 fetching https://api.findmyfacility.com/v1/openactive/sessionSeries?afterTimestamp=1786030803&afterId=247e3083-abaf-4275-9227-13d2e88eb2af",
+    "last_completed": "2026-09-01"
+  },
+  "quality_score": null
+}
+```
+
+The identifier, publisher and feed fields carry the same meaning as on a stall incident; the rest:
+
+- `first_detected` is the day after `detail.last_completed` — the first day the feed can be shown to
+  have been failing.
+- `days_open` and `consecutive_days` are both days since the last completed ingestion, so they always
+  agree, and both are between `error_days` and `success_lookback_days` by construction.
+- `past_threshold` is `true` once `days_open` reaches `past_threshold_days`, which defaults to **3**.
+- `detail.error_code` is the failure's code on the snapshot day: an HTTP status (`500`, `404`) or a
+  pipeline code (`BATCH_FAILED`, `CONNECTION_ERROR`, `MISSING_ITEMS`, `EMPTY_PAGE`).
+  `detail.error_message` is that failure's message. Both are `null` for a failure recorded before the
+  columns existed, and both always come from the same run.
+- `trend` is one flag per day over the trailing **ten days**, oldest first, ending on `snapshot_date`.
+  Always ten entries, so entry *i* is the same day for every incident in the response and the column
+  lines up as a bar strip.
+  - `1` — the feed's ingestion failed that day.
+  - `0` — anything else: it completed, it warned, or there was no ingestion run at all. Unlike the stall
+    monitor's `trend`, a missing day is not distinguished — the series answers "did this feed fail that
+    day", and an absent run did not. In the example above, 2026-09-02 (the day missing from the table)
+    reads `0` alongside the two completed days before it.
+  - The last entry is always `1`: that is what opened the incident.
+  - A `1` can appear before `first_detected` if the feed had an earlier failure spell inside the ten
+    days; the column is not filtered to this incident.
+- `status` is always `open` and `last_contacted` always `null`, as on every monitor.
+
+### `GET /admin/feed-ingestion-error-trend`
+
+Open ingestion error counts for each of the last `trend_days` days, oldest first. Each day is evaluated
+independently against the same rules as the incidents endpoint, so a point shows what that endpoint
+would have reported on that day — the final point always agrees with it. `past_threshold_count` is
+always a subset of `open_count`.
+
+Accepts `page`, `page_size`, `success_lookback_days`, `error_days`, `past_threshold_days`, `as_of` as
+above, plus:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `trend_days` | `30` | Days of history to return |
+
+```json
+{
+  "data": [
+    { "date": "2026-09-07", "open_count": 6, "past_threshold_count": 1 },
+    { "date": "2026-09-08", "open_count": 1, "past_threshold_count": 1 },
+    { "date": "2026-09-09", "open_count": 6, "past_threshold_count": 1 }
+  ],
+  "meta": { "snapshot_date": "2026-09-09", "generated_at": "2026-09-09T09:03:48Z", "page": 1, "page_size": 500, "total": 30 }
+}
+```
+
+Two things to expect in the series:
+
+- **A step down on the first day carrying `error_code`.** The column was added recently, so on earlier
+  days the `401`/`403` exclusion has nothing to match and those points count authorisation failures as
+  ingestion errors.
+- **A zero on days with no ingestion run**, such as 2026-09-02: no rows means no failures can be shown.
+  The count recovers the next day, so the series is spiky rather than smooth.
+
 ## Source data
 
-Both monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to `feeds` for
+Every monitor reads `opportunity_ingestion` (daily ingestion result per feed), joined to `feeds` for
 descriptive fields and `feed_quality` for the score. Multiple ingestion runs on the same day are
-collapsed into one day.
+collapsed into one day — summed for the stall monitors' `updated` counts, and collapsed with success
+winning for the error monitors' status.
 
-**The table currently holds only ~12 days of history** (from 2026-08-20). Consequences worth
-remembering when reading the numbers:
+`error_code` and `warning_message` were added to the table recently and are populated only for the most
+recent days; older `ERROR` rows carry neither.
 
-- The 120-day lookback is aspirational — it can only see as far back as the table goes.
-- Trend points read zero for the first `stall_days` (and `past_threshold_count` for the first
+A feed id can appear against two `dataset_id`s: a publisher that moves its dataset to a new hostname
+keeps its feed ids, so the feed has rows under the old name before the move and the new name after it
+(ChelmsfordCitySports moved from `leisurecloud.net` to `gs-signature.cloud` on 2026-08-23). All of it is
+the same feed's history and is kept; the feed is attributed to the dataset of its **most recent**
+ingestion, so it is reported under the name the dataset has now, and the old name disappears from the
+monitors once every feed has moved.
+
+**The table currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
+2026-08-20 duplicated. Consequences worth remembering when reading the numbers:
+
+- The 120-day stall lookback is aspirational — it can only see as far back as the table goes.
+- Stall trend points read zero for the first `stall_days` (and `past_threshold_count` for the first
   `past_threshold_days`) after the earliest day of data: no feed can yet be *shown* to have been silent
-  that long. With the current 12-day table, `past_threshold_count` is zero before 2026-08-27.
-- Most open incidents are currently past threshold — 119 of 126 — because the bulk of them date back
-  to the first day of data. Expect that proportion to fall as history accumulates.
+  that long.
+- Most open stall incidents are currently past threshold, because the bulk of them date back to the
+  first day of data. Expect that proportion to fall as history accumulates.
+- The ingestion error monitor's 15-day success lookback is inside what the table holds, so it is the one
+  window the data can currently exercise in full.
 
 ## Tests
 
@@ -260,11 +399,14 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~SingleFeedStallDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~FeedIngestionErrorDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~MonitorSummariesTests"
 ```
 
-The detection rules live in `Services/Admin/SingleFeedStallDetector.cs` and the summary arithmetic in
-`Services/Admin/MonitorSummaries.cs`, both deliberately free of BigQuery and ASP.NET types, and pinned
+The detection rules live in `Services/Admin/SingleFeedStallDetector.cs` and
+`Services/Admin/FeedIngestionErrorDetector.cs`, and the summary arithmetic in
+`Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live
 data looks like on the day.

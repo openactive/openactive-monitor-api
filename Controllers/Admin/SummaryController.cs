@@ -105,6 +105,11 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 			monitors.Add(singleFeedStall);
 		}
 
+		if (await FeedIngestionErrorSummary(snapshotDate.Value) is { } feedIngestionError)
+		{
+			monitors.Add(feedIngestionError);
+		}
+
 		return monitors;
 	}
 
@@ -130,6 +135,26 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 			.ToList();
 
 		return MonitorSummaries.Summarise(SingleFeedStallDetector.MonitorId, trend);
+	}
+
+	private async Task<MonitorSummarySnapshot?> FeedIngestionErrorSummary(DateOnly snapshotDate)
+	{
+		// Defaults everywhere except the trend length, so `count` agrees with what
+		// /admin/feed-ingestion-error-incidents reports; the per-incident status strip is not used here,
+		// so its window is collapsed to a single day.
+		var thresholds = new FeedIngestionErrorThresholds
+		{
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+
+		var histories = await LoadStatusHistories(snapshotDate, thresholds.RequiredHistoryDays);
+
+		var trend = FeedIngestionErrorDetector.Trend(histories, snapshotDate, thresholds)
+			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
+			.ToList();
+
+		return MonitorSummaries.Summarise(FeedIngestionErrorDetector.MonitorId, trend);
 	}
 
 	#endregion

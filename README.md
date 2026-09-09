@@ -22,6 +22,8 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/summary`: dashboard landing figures — monitored estate, current issues, per-monitor counts
 - `GET /admin/single-feed-stall-incidents`: feeds that were publishing recently but have gone quiet
 - `GET /admin/single-feed-stall-trend`: daily open/past-threshold stall counts
+- `GET /admin/feed-ingestion-error-incidents`: feeds whose ingestion is failing now but was completing recently
+- `GET /admin/feed-ingestion-error-trend`: daily open/past-threshold ingestion error counts
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.

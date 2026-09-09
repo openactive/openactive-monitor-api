@@ -25,6 +25,11 @@ internal static class IngestionHistoryQuery
 	/// to carry a value per day: <c>published_days</c> spans the whole window and drives detection, while
 	/// <c>recent</c> spans only <c>@trend_start</c> onwards and carries the daily <c>updated</c> counts
 	/// used for the per-incident trend column.
+	///
+	/// A feed id can appear against more than one <c>dataset_id</c>, because a publisher that moves its
+	/// dataset to a new hostname keeps its feed ids: the same feed then has rows under the old name
+	/// before the move and the new name after it. Every row is the same feed's history and is kept, and
+	/// the feed is attributed to the dataset of its most recent ingestion — the name the dataset has now.
 	/// </remarks>
 	/// <param name="ingestionTable">Fully qualified <c>opportunity_ingestion</c> table name.</param>
 	/// <param name="ignoreFirstIngestionDate">
@@ -41,16 +46,24 @@ internal static class IngestionHistoryQuery
 			$"""
 			WITH daily AS (
 			  SELECT feed_id,
-			         dataset_id,
 			         DATE(ingestion_date) AS ingestion_day,
-			         SUM(updated) AS updated
+			         SUM(updated) AS updated,
+			         -- The dataset the feed was ingested under that day, taken from the day's last run.
+			         ARRAY_AGG(dataset_id ORDER BY ingestion_date DESC, dataset_id LIMIT 1)[OFFSET(0)] AS dataset_id
 			  FROM {ingestionTable}
 			  WHERE DATE(ingestion_date) BETWEEN @window_start AND @window_end
+			        AND feed_id IS NOT NULL
+			        AND dataset_id IS NOT NULL
 			        {firstDateFilter}
-			  GROUP BY feed_id, dataset_id, ingestion_day
+			  GROUP BY feed_id, ingestion_day
 			)
 			SELECT feed_id,
-			       ANY_VALUE(dataset_id) AS dataset_id,
+			       -- The dataset of the feed's most recent ingestion, so a feed whose publisher moved
+			       -- hostname is reported under the dataset it belongs to now. ARRAY_AGG rather than
+			       -- ANY_VALUE because ANY_VALUE would attribute such a feed differently from one query to
+			       -- the next, moving it in and out of the dataset-wide stall exclusion and making the same
+			       -- day's incident count differ between endpoints.
+			       ARRAY_AGG(dataset_id ORDER BY ingestion_day DESC LIMIT 1)[OFFSET(0)] AS dataset_id,
 			       ARRAY_AGG(IF(updated > 0, FORMAT_DATE('%F', ingestion_day), NULL) IGNORE NULLS
 			                 ORDER BY ingestion_day) AS published_days,
 			       ARRAY_AGG(IF(ingestion_day >= @trend_start,
@@ -58,7 +71,6 @@ internal static class IngestionHistoryQuery
 			                    NULL) IGNORE NULLS
 			                 ORDER BY ingestion_day) AS recent
 			FROM daily
-			WHERE feed_id IS NOT NULL AND dataset_id IS NOT NULL
 			GROUP BY feed_id
 			""";
 	}

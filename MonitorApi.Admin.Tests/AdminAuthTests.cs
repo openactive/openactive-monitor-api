@@ -15,6 +15,8 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/summary",
 		"/admin/single-feed-stall-incidents",
 		"/admin/single-feed-stall-trend",
+		"/admin/feed-ingestion-error-incidents",
+		"/admin/feed-ingestion-error-trend",
 	];
 
 	[Theory]
