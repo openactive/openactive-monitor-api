@@ -33,35 +33,5 @@ public sealed record FeedMetadata(
 	}
 
 	/// <summary>Publisher slug, e.g. <c>pub_freedom-leisure</c>, or <c>pub_unknown</c> when unnamed.</summary>
-	public string PublisherId => "pub_" + Slugify(PublisherName);
-
-	private static string Slugify(string? value)
-	{
-		if (string.IsNullOrWhiteSpace(value))
-		{
-			return "unknown";
-		}
-
-		var slug = new System.Text.StringBuilder(value.Length);
-		var pendingSeparator = false;
-
-		foreach (var c in value)
-		{
-			if (char.IsLetterOrDigit(c))
-			{
-				if (pendingSeparator && slug.Length > 0)
-				{
-					slug.Append('-');
-				}
-				pendingSeparator = false;
-				slug.Append(char.ToLowerInvariant(c));
-			}
-			else
-			{
-				pendingSeparator = true;
-			}
-		}
-
-		return slug.Length == 0 ? "unknown" : slug.ToString();
-	}
+	public string PublisherId => "pub_" + AdminSlug.Of(PublisherName);
 }

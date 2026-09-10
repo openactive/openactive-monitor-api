@@ -4,12 +4,13 @@ using MonitorApi.Services.Admin;
 namespace MonitorApi.Controllers.Admin;
 
 /// <summary>
-/// Base class for admin controllers that run the feed-health monitors, holding the loading of the
-/// <c>opportunity_ingestion</c> publishing history those monitors all detect against.
+/// Base class for admin controllers that run the health monitors, holding the loading of the data
+/// those monitors detect against — the <c>opportunity_ingestion</c> publishing history, and the
+/// <c>opportunities</c> orphan counts.
 /// </summary>
 /// <remarks>
 /// Sits between <see cref="AdminControllerBase"/> and the monitor controllers so that the per-monitor
-/// endpoints and the cross-monitor summary read the same history the same way, rather than each
+/// endpoints and the cross-monitor summary read the same data the same way, rather than each
 /// controller growing its own copy of the window arithmetic.
 /// </remarks>
 public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOptions, IOptions<ApiOptions> apiOptions)
@@ -19,6 +20,12 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 	/// The day to evaluate the monitors against: the caller's <paramref name="asOf"/>, else the latest
 	/// day in the ingestion table. Returns <c>null</c> when the table is empty.
 	/// </summary>
+	/// <remarks>
+	/// Always the <c>opportunity_ingestion</c> day, including for monitors that read
+	/// <c>opportunities</c>: that table is a mirror refreshed by the same pipeline, so the ingestion
+	/// day is its provenance, and one resolution keeps <c>meta.snapshot_date</c> meaning the same
+	/// thing across the whole admin surface.
+	/// </remarks>
 	protected async Task<DateOnly?> ResolveSnapshotDate(DateOnly? asOf)
 	{
 		if (asOf is not null)
@@ -73,5 +80,24 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 			IngestionStatusQuery.StatusHistoryParameters(snapshotDate.AddDays(-historyDays), snapshotDate));
 
 		return await rows.Select(IngestionStatusQuery.ParseStatusHistory).ToListAsync();
+	}
+
+	/// <summary>
+	/// Loads per-dataset, per-kind orphaned-child counts from <c>opportunities</c>.
+	/// </summary>
+	/// <remarks>
+	/// Takes no window and no date: <c>opportunities</c> holds current state, so every child in it is
+	/// one a consumer can see today and all of them are counted.
+	///
+	/// Returns every dataset and kind, including those with no orphans at all — deciding which of them
+	/// is an incident belongs to <see cref="OrphanedChildrenDetector"/>. Shared with the cross-monitor
+	/// summary so its tile is reduced from the very same rows the endpoint reports, rather than from a
+	/// second query that has to agree.
+	/// </remarks>
+	protected async Task<List<DatasetKindOrphanCounts>> LoadOrphanCounts()
+	{
+		var rows = await Query(OrphanedChildrenQuery.OrphanCountsSql(Fq(Tables.Opportunities)));
+
+		return await rows.Select(OrphanedChildrenQuery.ParseOrphanCounts).ToListAsync();
 	}
 }

@@ -108,6 +108,43 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 	}
 
 	[Fact]
+	public async Task ReportsTheOrphanedChildrenMonitorWithNoSeriesAndNoEscalationCount()
+	{
+		var summary = (await Get()).Data;
+
+		var monitor = Assert.Single(summary.Monitors, m => m.MonitorId == "dataset_orphaned_children");
+
+		// Unlike the other two: opportunities is a current-state mirror with no per-day snapshots, so
+		// there is no history to draw a sparkline from, and the escalation threshold applies to
+		// datasets rather than to the orphan total this count reports.
+		Assert.Empty(monitor.Sparkline);
+		Assert.Equal(0, monitor.PastThresholdCount);
+		Assert.True(monitor.Count >= 0);
+	}
+
+	[Fact]
+	public async Task OrphanedChildrenCountIsTheEstateOrphanTotalNotTheDatasetCount()
+	{
+		var summary = (await Get()).Data;
+		var monitor = summary.Monitors.Single(m => m.MonitorId == "dataset_orphaned_children");
+
+		var incidents = await GetAdmin<AdminPage<OrphanedChildrenIncident>>(
+			"/admin/dataset-orphaned-children-incidents?page_size=1000");
+
+		// The tile is reduced from the same Detect call the endpoint reports, so the total agrees by
+		// construction rather than by two implementations happening to match. Note this is the one
+		// tile whose count is NOT the endpoint's meta.total, which counts the datasets responsible.
+		Assert.Equal(incidents.Data.Sum(i => i.OrphanCount), monitor.Count);
+
+		if (incidents.Meta.Total > 0)
+		{
+			// One dataset routinely accounts for a great many orphans, so the total can only be at
+			// least the number of datasets, and in practice is far larger.
+			Assert.True(monitor.Count >= incidents.Meta.Total);
+		}
+	}
+
+	[Fact]
 	public async Task HeadlineDeltasAggregateTheMonitorDeltas()
 	{
 		var summary = (await Get()).Data;
@@ -116,9 +153,13 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 
 		// The headline figures sum every monitor the summary reports, so both trends are in play.
 		Assert.Equal(
-			["feed_ingestion_error", "single_feed_stall"],
+			["dataset_orphaned_children", "feed_ingestion_error", "single_feed_stall"],
 			summary.Monitors.Select(m => m.MonitorId).Order());
 
+		// dataset_orphaned_children is deliberately absent from the sums that follow. It reads a
+		// current-state table, so its trend is a single point with no previous day, its deltas are
+		// null, and MonitorSummaries.TotalDelta skips a null rather than counting it as zero. These
+		// two expectations are therefore still complete.
 		var expectedOpenDelta =
 			(stalls.Data[^1].OpenCount - stalls.Data[^2].OpenCount) +
 			(errors.Data[^1].OpenCount - errors.Data[^2].OpenCount);

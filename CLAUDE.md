@@ -94,3 +94,10 @@ fixtures, docs, or terminal output. `appsettings.json` holds empty placeholder k
 missing and one duplicated. Anything reasoning over longer windows — the admin stall monitors' 120-day
 lookback in particular — is correct in code but cannot yet be exercised by the data. Never assert on
 absolute counts or long histories in a test.
+
+`opportunities` has **no history at all**: one row per opportunity item, current state only, no
+`ingestion_date`. Do not design a trend endpoint, an `as_of`, or a date window over it — the
+`dataset_orphaned_children` monitor deliberately has none of them and counts every row the table
+holds, and it takes its `snapshot_date` from `opportunity_ingestion` because that pipeline is what
+refreshes the mirror. It is also the largest table by far: one full-width query scans ~2.6 GB, so
+aggregate per entity in SQL and scan it once.

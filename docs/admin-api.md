@@ -21,6 +21,7 @@ http://localhost:5268/admin/single-feed-stall-incidents?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-incidents?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
+http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToken>
 ```
 
 ## API reference
@@ -102,6 +103,12 @@ unhealthy, and one line per monitor. Takes no parameters.
         "count": 6,
         "past_threshold_count": 1,
         "sparkline": [1, 2, 1, 1, 6, 1, 6]
+      },
+      {
+        "monitor_id": "dataset_orphaned_children",
+        "count": 582352,
+        "past_threshold_count": 0,
+        "sparkline": []
       }
     ],
     "publishers_with_issues_delta": 2,
@@ -131,6 +138,15 @@ Field notes:
   incidents endpoint called without arguments, and `sparkline` is the last seven `open_count` values
   from its trend endpoint, oldest first, so `sparkline[^1] == count`. It is shorter than seven entries
   only when less history exists, and is never padded.
+  - `dataset_orphaned_children` is the exception to all of this. Its `count` is the **total number of
+    orphaned children across the estate** — a count of broken items, not of datasets — so it does
+    *not* equal its incidents endpoint's `meta.total`, which counts the datasets responsible. The
+    headline is the size of the defect, because a single dataset routinely accounts for hundreds of
+    thousands of orphans. It reads `opportunities`, which holds no history, so it has no trend
+    endpoint, its `sparkline` is always **empty**, and its `past_threshold_count` is always `0` (that
+    threshold applies to datasets, not to this total). Its day-on-day change is unknowable rather than
+    zero, so it contributes nothing to the two `*_delta` figures below instead of dragging them
+    towards zero.
   - That day is the *ingestion* table's latest day and can differ from `meta.snapshot_date`, which dates
     the coverage figures from `feed_ingestion`.
 - `publishers_with_issues_delta` and `past_threshold_delta` are day-on-day changes in the monitors'
@@ -361,10 +377,119 @@ Two things to expect in the series:
 - **A zero on days with no ingestion run**, such as 2026-09-02: no rows means no failures can be shown.
   The count recovers the next day, so the series is spiky rather than smooth.
 
+### `GET /admin/dataset-orphaned-children-incidents`
+
+Datasets publishing children whose parent event is missing from the same dataset, ordered worst first.
+
+An OpenActive child names its parent through `has_superEvent`: a `Slot` names its `FacilityUse`, a
+`ScheduledSession` names its `SessionSeries`. When that reference points at a `data_id` that is not in
+`opportunities` for the same `dataset_url`, the child is an **orphan** — bookable availability hanging
+off an event no consumer of the dataset can resolve. A dataset raises an incident when it has at least
+`min_orphans` of them.
+
+The rules worth knowing:
+
+- **One incident per dataset, not per feed.** The missing parent may be published by a different feed
+  of the same dataset, so the check only means anything at dataset scope — and a publisher fixes it
+  once. `detail.by_kind` splits every count between `Slot` and `ScheduledSession`.
+- **`missing_parent_count` is the figure to act on, not `orphan_count`.** One absent parent can orphan
+  thousands of children. On 2026-09-09 Loughborough University reported 433,014 orphaned Slots arising
+  from just **59** missing `FacilityUse` records — fifty-nine things to fix, not four hundred thousand.
+- **Only a scalar reference can dangle.** A child that inlines its `superEvent` as a JSON object
+  carries its parent with it, so it counts in `child_count` but is never examined. This is most of what
+  the check excludes, and it is concentrated in `ScheduledSession`: of the ~1.38M published, about 637k
+  inline the parent and are never checked.
+- **Nothing is filtered by date.** Every child the table holds is counted, however long ago it was
+  added: `opportunities` is current state, so anything in it is something a consumer can see today.
+  Ageing either side out would report stable datasets as broken — a `FacilityUse` is ingested once and
+  then sits unchanged while the publisher churns slots against it — and would quietly duplicate the
+  stall monitor.
+- **A parent published by somebody else still counts as missing.** The check is scoped to one
+  `dataset_url`, because a consumer of this dataset cannot resolve anything outside it.
+- **Known gap:** there is no `min_share` knob, so a dataset with three children all orphaned sits in
+  the same list as one with 200,000. Sort or filter on `orphan_share` client-side for now.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `min_orphans` | `1` | Orphaned children that open an incident, counted across both kinds |
+| `past_threshold_orphans` | `100` | Orphaned children that set `past_threshold`; never treated as looser than `min_orphans` |
+
+There is **no date parameter at all** — no `as_of`, no lookback. `opportunities` is a current-state
+mirror with no per-day snapshots, so a past date cannot be answered and accepting one would return
+today's figures under yesterday's label; and since the whole table is current, there is nothing a
+window would usefully exclude.
+
+```json
+{
+  "monitor_id": "dataset_orphaned_children",
+  "publisher_id": "pub_loughborough-university",
+  "publisher_name": "Loughborough University",
+  "dataset_url": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/OpenActive",
+  "dataset_name": "Loughborough University Sessions and Facilities",
+  "child_count": 478627,
+  "checked_count": 472876,
+  "orphan_count": 433014,
+  "orphan_share": 0.9047003198733042,
+  "missing_parent_count": 59,
+  "past_threshold": true,
+  "status": "open",
+  "last_contacted": null,
+  "detail": {
+    "by_kind": [
+      { "kind": "Slot", "child_count": 472876, "checked_count": 472876, "orphan_count": 433014, "missing_parent_count": 59 },
+      { "kind": "ScheduledSession", "child_count": 5751, "checked_count": 0, "orphan_count": 0, "missing_parent_count": 0 }
+    ],
+    "missing_parents": [
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/664-1", "child_count": 10857 },
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/686-1", "child_count": 10857 }
+    ]
+  }
+}
+```
+
+Field notes:
+
+- `dataset_url` is the incident's identity; `dataset_name` is the display name from `feed_quality`,
+  falling back to the URL's host so it is never empty. `publisher_id` is a slug derived from
+  `publisher_name` (`pub_<slug>`), the same value the feed monitors use for the same publisher.
+- `child_count` counts **every** child of the two kinds the dataset publishes, whatever its age;
+  `checked_count` counts only those examined, meaning those that name their parent with a scalar
+  reference. The gap between them is children that inline their `superEvent`. So
+  `orphan_count <= checked_count <= child_count` always.
+- `orphan_share` is `orphan_count / child_count`, so its numerator covers only the children that could
+  be checked while its denominator covers all of them. Divide `orphan_count` by `checked_count`
+  yourself for the ratio over exactly what was examined; the two diverge for a dataset whose children
+  mostly inline their parent, which is common for `ScheduledSession`.
+- `past_threshold` is `true` once `orphan_count` reaches `past_threshold_orphans`, which defaults to
+  **100**. On 2026-09-09 that split 21 open incidents into 16 escalated and 5 not.
+- `detail.by_kind` entries sum to the incident's own counts and are ordered worst kind first. A kind
+  the dataset does not publish is absent rather than present with zeros.
+- `detail.missing_parents` is a sample of at most **five** missing ids, most children first, merged
+  across both kinds so it is the dataset's worst offenders rather than one kind's. Paste one into the
+  publisher's feed to show them what is missing. `missing_parent_count` is the full count the sample is
+  drawn from.
+- `status` is always `open` and `last_contacted` always `null`, as on every monitor.
+
+**Fields this monitor does not have**, and why — they are *absent*, not present and null:
+
+- `feed_id`, `feed_name`, `feed_type`, `feed_url` — the entity is a dataset, not a feed.
+- `first_detected`, `days_open`, `consecutive_days`, `trend` — `opportunities` carries no history, so
+  none of them can be computed. These would be **added** if a snapshot source appeared; carrying them
+  as always-null fields now would mean narrowing them later, which breaks any consumer that had handled
+  the null.
+- `quality_score` — `feed_quality.score` is per-feed and there is no dataset-level equivalent.
+
+The **spine every monitor's incidents share**, and all the dashboard should rely on across them, is
+`monitor_id`, `publisher_id`, `publisher_name`, `past_threshold`, `status` and `last_contacted`.
+Everything else, including which entity the incident is about, is monitor-specific.
+
 ## Source data
 
-Every monitor reads `opportunity_ingestion` (daily ingestion result per feed), joined to `feeds` for
-descriptive fields and `feed_quality` for the score. Multiple ingestion runs on the same day are
+The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
+`feeds` for descriptive fields and `feed_quality` for the score. The orphaned-children monitor reads
+`opportunities` instead — see below. Multiple ingestion runs on the same day are
 collapsed into one day — summed for the stall monitors' `updated` counts, and collapsed with success
 winning for the error monitors' status.
 
@@ -378,7 +503,22 @@ the same feed's history and is kept; the feed is attributed to the dataset of it
 ingestion, so it is reported under the name the dataset has now, and the old name disappears from the
 monitors once every feed has moved.
 
-**The table currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
+`opportunities` is a different shape entirely: one row per opportunity item, **current state only**,
+with no `ingestion_date` and so no history of any kind. Consequences:
+
+- It cannot date itself, which is why the orphaned-children monitor takes `meta.snapshot_date` from
+  `opportunity_ingestion` like every other monitor: `opportunities` is a mirror refreshed by that same
+  pipeline, so the ingestion day is its provenance. Its own `last_updated` is publisher-supplied and
+  can sit in the future when a publisher's clock is wrong.
+- There is no trend endpoint and no date parameter of any kind for that monitor, and its incidents
+  carry no `days_open`-style fields. Every row in the table is counted, however old.
+- `dataset_url` is the join key to `feeds` (for `publisher_name`) and `feed_quality` (for
+  `dataset_name`). On 2026-09-09, 159 of the 160 dataset URLs in `opportunities` matched a `feeds` row;
+  the one that does not would report with empty descriptive fields.
+- It is large — a single orphan query scans roughly 2.6 GB — which the daily cache absorbs but which
+  makes `/admin/summary` noticeably slower than it was.
+
+**`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
 2026-08-20 duplicated. Consequences worth remembering when reading the numbers:
 
 - The 120-day stall lookback is aspirational — it can only see as far back as the table goes.
@@ -402,11 +542,16 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~FeedIngestionErrorDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~MonitorSummariesTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~OrphanedChildrenDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~AdminSlugTests"
 ```
 
-The detection rules live in `Services/Admin/SingleFeedStallDetector.cs` and
-`Services/Admin/FeedIngestionErrorDetector.cs`, and the summary arithmetic in
-`Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and ASP.NET types, and pinned
+The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
+`Services/Admin/FeedIngestionErrorMonitor.cs` and `Services/Admin/OrphanedChildrenMonitor.cs`, and the
+summary arithmetic in `Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and
+ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live
 data looks like on the day.
