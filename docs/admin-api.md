@@ -19,6 +19,8 @@ every admin endpoint refuses every request — it never falls back to the public
 http://localhost:5268/admin/summary?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-incidents?token=<AdminToken>
 http://localhost:5268/admin/single-feed-stall-trend?token=<AdminToken>
+http://localhost:5268/admin/dataset-stall-incidents?token=<AdminToken>
+http://localhost:5268/admin/dataset-stall-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-incidents?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
 http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToken>
@@ -99,6 +101,12 @@ unhealthy, and one line per monitor. Takes no parameters.
         "sparkline": [126, 127, 125, 122, 123, 124, 126]
       },
       {
+        "monitor_id": "dataset_stall",
+        "count": 1,
+        "past_threshold_count": 1,
+        "sparkline": [1, 1, 1, 2, 2, 1, 1]
+      },
+      {
         "monitor_id": "feed_ingestion_error",
         "count": 6,
         "past_threshold_count": 1,
@@ -172,7 +180,8 @@ Two rules are worth knowing:
 - **Days with no ingestion run extend a silence rather than break it.** The absence of a run is not
   evidence that the feed published, so a pipeline gap looks like silence.
 - **Datasets whose feeds have *all* gone quiet are excluded.** That is a dataset-wide outage, reported
-  by its own monitor, not a set of independent single-feed stalls. A feed that has never published also
+  by [`dataset-stall-incidents`](#get-admindataset-stall-incidents), not a set of independent
+  single-feed stalls. A feed that has never published also
   counts as "not publishing" for this check, so a dead dataset containing one never-seen feed cannot
   leak through as single-feed stalls.
 
@@ -256,6 +265,129 @@ plus:
     { "date": "2026-09-01", "open_count": 126, "past_threshold_count": 119 }
   ],
   "meta": { "snapshot_date": "2026-09-01", "generated_at": "2026-09-02T11:09:01Z", "page": 1, "page_size": 500, "total": 30 }
+}
+```
+
+### `GET /admin/dataset-stall-incidents`
+
+Datasets in which **every** feed has stopped publishing, ordered longest-running first. Nothing new or
+updated is reaching consumers from that publisher at all, so all of their downstream data is frozen —
+as opposed to one feed of an otherwise healthy dataset going quiet, which is the single-feed monitor's
+job.
+
+A dataset raises an incident when it published at least once within `lookback_days` **and** every one
+of its feeds has since been silent for `stall_days` or more consecutive days. A dataset counts as
+publishing on any day one of its feeds reported at least one `updated` item, so it goes quiet only when
+its last remaining feed does, and it has been silent for as long as its most recently active feed has.
+
+The rules worth knowing:
+
+- **Days with no ingestion run extend a silence rather than break it**, exactly as for single feeds: the
+  absence of a run is not evidence that anything published.
+- **A dataset that never published inside the lookback window is not an incident.** There is nothing to
+  say it ever worked. Nor is one silent for longer than `lookback_days` — that is retired, not stalled.
+- **A feed that never published does not stop the dataset being reported.** It says nothing about when
+  the dataset was last live, but it is still one of the feeds the incident accounts for and appears in
+  `detail.feeds` with a `null` `last_published`.
+- **This monitor and `single-feed-stall-incidents` partition the same signal.** That one excludes
+  datasets whose feeds have all gone quiet, precisely so they are reported here once instead of as a
+  handful of unrelated feed stalls. At the default thresholds no feed appears in both.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `lookback_days` | `120` | How recently the dataset must have published to count as live rather than retired |
+| `stall_days` | `5` | Consecutive days with no feed publishing that open an incident |
+| `past_threshold_days` | `7` | Consecutive silent days that set `past_threshold`; never treated as looser than `stall_days` |
+| `as_of` | latest ingestion day | Evaluate as at this date (`yyyy-MM-dd`) instead of the snapshot date |
+
+The defaults match the single-feed monitor's deliberately: the two only partition the silence cleanly
+while they agree on what silence is. The `trend` column always covers the trailing ten days,
+independently of `lookback_days`.
+
+```json
+{
+  "monitor_id": "dataset_stall",
+  "publisher_id": "pub_shirley-high-school",
+  "publisher_name": "Shirley High School",
+  "dataset_url": "https://shirleyhighschool.bookteq.com/api/open-active",
+  "dataset_name": "Shirley High School Facilities",
+  "feed_count": 2,
+  "first_detected": "2026-09-01",
+  "days_open": 9,
+  "consecutive_days": 9,
+  "past_threshold": true,
+  "status": "open",
+  "last_contacted": null,
+  "trend": [404, null, 0, 0, 0, 0, 0, 0, 0, 0],
+  "detail": {
+    "last_modified": "2026-09-01",
+    "feeds": [
+      {
+        "feed_id": "shirleyhighschool-bookteq-com-api-open-active-slots",
+        "feed_name": "slots",
+        "last_published": "2026-09-01",
+        "consecutive_days": 9
+      },
+      {
+        "feed_id": "shirleyhighschool-bookteq-com-api-open-active-facility-uses",
+        "feed_name": "facility-uses",
+        "last_published": null,
+        "consecutive_days": null
+      }
+    ]
+  }
+}
+```
+
+Field notes:
+
+- The incident's identity is `dataset_url`, matching `feeds.dataset_url`. `dataset_name` is the stored
+  `feed_quality.dataset_name`, falling back to the host of the URL, so it is never empty.
+- `first_detected` is the day the dataset went quiet — the last day *any* of its feeds published — which
+  is also `detail.last_modified` and the `last_published` of the first entry in `detail.feeds`.
+- `days_open` and `consecutive_days` always agree, as on the single-feed monitor: the incident opens the
+  day the dataset goes dark and closes as soon as any feed publishes again.
+- `feed_count` is the feeds seen for the dataset in the ingestion history, all of them silent.
+  `detail.feeds` lists them, most recently active first, so the first entry is the feed that went quiet
+  last and dates the incident, and the rest show whether the dataset stopped all at once or wound down
+  feed by feed. A feed's own `consecutive_days` is therefore never smaller than the incident's, and is
+  `null` — with `last_published` — for a feed never seen to publish.
+- `trend` is the dataset's daily `updated` total from `opportunity_ingestion` over the trailing **ten
+  days**, oldest first, ending on `snapshot_date` — every feed's counts added up. Always ten entries, so
+  entry *i* is the same day for every incident in the response.
+  - `0` — at least one feed was polled that day and the dataset published nothing.
+  - `null` — no feed of the dataset had an ingestion row that day, so nothing is known. Not the same as
+    zero.
+- `status` is always `open` and `last_contacted` always `null`, as on every monitor.
+- There is no `feed_id`, `feed_name`, `feed_type`, `feed_url` or `quality_score`: the incident is about
+  a dataset, its feeds are in `detail.feeds`, and `feed_quality.score` is per-feed with no dataset-level
+  equivalent. As on `dataset-orphaned-children-incidents`, these are absent rather than always-null.
+
+### `GET /admin/dataset-stall-trend`
+
+Open dataset-wide stall counts for each of the last `trend_days` days, oldest first. Each day is
+evaluated independently against the same rules as the incidents endpoint, so a point shows what that
+endpoint would have reported on that day — the final point always agrees with it.
+`past_threshold_count` is always a subset of `open_count`. Counts are of **datasets**, so a publisher
+with six dark feeds is one, not six.
+
+Accepts `page`, `page_size`, `lookback_days`, `stall_days`, `past_threshold_days`, `as_of` as above,
+plus:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `trend_days` | `30` | Days of history to return |
+
+```json
+{
+  "data": [
+    { "date": "2026-09-08", "open_count": 1, "past_threshold_count": 1 },
+    { "date": "2026-09-09", "open_count": 1, "past_threshold_count": 1 },
+    { "date": "2026-09-10", "open_count": 1, "past_threshold_count": 1 }
+  ],
+  "meta": { "snapshot_date": "2026-09-10", "generated_at": "2026-09-10T14:54:51Z", "page": 1, "page_size": 500, "total": 30 }
 }
 ```
 
@@ -488,7 +620,9 @@ Everything else, including which entity the incident is about, is monitor-specif
 ## Source data
 
 The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
-`feeds` for descriptive fields and `feed_quality` for the score. The orphaned-children monitor reads
+`feeds` for descriptive fields and `feed_quality` for the score. The two stall monitors read exactly
+the same per-feed publishing history — one feed at a time, one dataset at a time — which is what lets
+them partition the silence between them rather than each having its own idea of it. The orphaned-children monitor reads
 `opportunities` instead — see below. Multiple ingestion runs on the same day are
 collapsed into one day — summed for the stall monitors' `updated` counts, and collapsed with success
 winning for the error monitors' status.
@@ -526,7 +660,11 @@ with no `ingestion_date` and so no history of any kind. Consequences:
   `past_threshold_days`) after the earliest day of data: no feed can yet be *shown* to have been silent
   that long.
 - Most open stall incidents are currently past threshold, because the bulk of them date back to the
-  first day of data. Expect that proportion to fall as history accumulates.
+  first day of data. Expect that proportion to fall as history accumulates. The same applies to the
+  dataset-wide stalls, which are drawn from the same history.
+- A dataset counts as dark only once *every* feed has been silent for `stall_days`, so
+  `dataset-stall-incidents` is a short list — a single dataset on 2026-09-10 — while
+  `single-feed-stall-incidents` runs to dozens. That ratio is the monitor working, not a gap in it.
 - The ingestion error monitor's 15-day success lookback is inside what the table holds, so it is the one
   window the data can currently exercise in full.
 
@@ -539,6 +677,8 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~SingleFeedStallDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~DatasetStallDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~FeedIngestionErrorDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~MonitorSummariesTests"
@@ -549,7 +689,8 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
 ```
 
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
-`Services/Admin/FeedIngestionErrorMonitor.cs` and `Services/Admin/OrphanedChildrenMonitor.cs`, and the
+`Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs` and
+`Services/Admin/OrphanedChildrenMonitor.cs`, and the
 summary arithmetic in `Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and
 ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The

@@ -96,6 +96,18 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 	}
 
 	[Fact]
+	public async Task ReportsTheDatasetStallMonitor()
+	{
+		var summary = (await Get()).Data;
+
+		var monitor = Assert.Single(summary.Monitors, m => m.MonitorId == "dataset_stall");
+
+		Assert.InRange(monitor.Sparkline.Count, 1, 7);
+		Assert.Equal(monitor.Count, monitor.Sparkline[^1]);
+		Assert.True(monitor.PastThresholdCount <= monitor.Count);
+	}
+
+	[Fact]
 	public async Task ReportsTheFeedIngestionErrorMonitor()
 	{
 		var summary = (await Get()).Data;
@@ -149,11 +161,12 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 	{
 		var summary = (await Get()).Data;
 		var stalls = await GetAdmin<AdminPage<StallTrendPoint>>("/admin/single-feed-stall-trend?trend_days=7");
+		var datasetStalls = await GetAdmin<AdminPage<DatasetStallTrendPoint>>("/admin/dataset-stall-trend?trend_days=7");
 		var errors = await GetAdmin<AdminPage<IngestionErrorTrendPoint>>("/admin/feed-ingestion-error-trend?trend_days=7");
 
-		// The headline figures sum every monitor the summary reports, so both trends are in play.
+		// The headline figures sum every monitor the summary reports, so all three trends are in play.
 		Assert.Equal(
-			["dataset_orphaned_children", "feed_ingestion_error", "single_feed_stall"],
+			["dataset_orphaned_children", "dataset_stall", "feed_ingestion_error", "single_feed_stall"],
 			summary.Monitors.Select(m => m.MonitorId).Order());
 
 		// dataset_orphaned_children is deliberately absent from the sums that follow. It reads a
@@ -162,9 +175,11 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 		// two expectations are therefore still complete.
 		var expectedOpenDelta =
 			(stalls.Data[^1].OpenCount - stalls.Data[^2].OpenCount) +
+			(datasetStalls.Data[^1].OpenCount - datasetStalls.Data[^2].OpenCount) +
 			(errors.Data[^1].OpenCount - errors.Data[^2].OpenCount);
 		var expectedPastThresholdDelta =
 			(stalls.Data[^1].PastThresholdCount - stalls.Data[^2].PastThresholdCount) +
+			(datasetStalls.Data[^1].PastThresholdCount - datasetStalls.Data[^2].PastThresholdCount) +
 			(errors.Data[^1].PastThresholdCount - errors.Data[^2].PastThresholdCount);
 
 		Assert.Equal(expectedOpenDelta, summary.PublishersWithIssuesDelta);
@@ -178,6 +193,19 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 		var incidents = await GetAdmin<AdminPage<StallIncident>>("/admin/single-feed-stall-incidents?page_size=1000");
 
 		var monitor = summary.Monitors.Single(m => m.MonitorId == "single_feed_stall");
+
+		Assert.Equal(incidents.Meta.Total, monitor.Count);
+		Assert.Equal(incidents.Data.Count(i => i.PastThreshold), monitor.PastThresholdCount);
+	}
+
+	[Fact]
+	public async Task DatasetStallCountAgreesWithItsOwnIncidentsEndpoint()
+	{
+		var summary = (await Get()).Data;
+		var incidents = await GetAdmin<AdminPage<DatasetStallIncident>>(
+			"/admin/dataset-stall-incidents?page_size=1000");
+
+		var monitor = summary.Monitors.Single(m => m.MonitorId == "dataset_stall");
 
 		Assert.Equal(incidents.Meta.Total, monitor.Count);
 		Assert.Equal(incidents.Data.Count(i => i.PastThreshold), monitor.PastThresholdCount);

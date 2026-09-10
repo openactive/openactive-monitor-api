@@ -149,27 +149,6 @@ public class FeedErrorsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			: thresholds with { TrendDays = Math.Clamp(trendDays.Value, 1, 365) };
 	}
 
-	private async Task<Dictionary<string, FeedMetadata>> LoadFeedMetadata(IReadOnlyCollection<string> feedIds)
-	{
-		if (feedIds.Count == 0)
-		{
-			return [];
-		}
-
-		var rows = await Query(
-			IngestionHistoryQuery.FeedMetadataSql(Fq(Tables.Feeds), Fq(Tables.FeedQuality)),
-			IngestionHistoryQuery.FeedMetadataParameters(feedIds));
-
-		var metadata = new Dictionary<string, FeedMetadata>();
-		await foreach (var row in rows)
-		{
-			var record = IngestionHistoryQuery.ParseFeedMetadata(row);
-			metadata[record.FeedId] = record;
-		}
-
-		return metadata;
-	}
-
 	/// <summary>
 	/// Hydrates a detected error into the dashboard payload. <paramref name="metadata"/> is null when the
 	/// feed appears in the ingestion table but has no <c>feeds</c> row; the incident is still reported,

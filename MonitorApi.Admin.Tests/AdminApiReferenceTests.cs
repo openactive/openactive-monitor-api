@@ -30,6 +30,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 
 		Assert.Contains("/admin/single-feed-stall-incidents", paths);
 		Assert.Contains("/admin/single-feed-stall-trend", paths);
+		Assert.Contains("/admin/dataset-stall-incidents", paths);
+		Assert.Contains("/admin/dataset-stall-trend", paths);
 		Assert.Contains("/admin/feed-ingestion-error-incidents", paths);
 		Assert.Contains("/admin/feed-ingestion-error-trend", paths);
 		Assert.Contains("/admin/dataset-orphaned-children-incidents", paths);
@@ -38,6 +40,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 
 	[Theory]
 	[InlineData("/admin/single-feed-stall-incidents", "page,page_size,lookback_days,stall_days,past_threshold_days,as_of")]
+	[InlineData("/admin/dataset-stall-incidents", "page,page_size,lookback_days,stall_days,past_threshold_days,as_of")]
+	[InlineData("/admin/dataset-stall-trend", "page,page_size,trend_days,lookback_days,stall_days,past_threshold_days,as_of")]
 	[InlineData("/admin/feed-ingestion-error-incidents", "page,page_size,success_lookback_days,error_days,past_threshold_days,as_of")]
 	[InlineData("/admin/feed-ingestion-error-trend", "page,page_size,trend_days,success_lookback_days,error_days,past_threshold_days,as_of")]
 	// No date parameter of any kind: opportunities holds current state only, so a past date cannot be
@@ -73,6 +77,21 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("monitor_id", incident);
 		Assert.Contains("past_threshold", incident);
 		Assert.Contains("quality_score", incident);
+
+		var datasetStall = schemas.GetProperty("DatasetStallIncident").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("monitor_id", datasetStall);
+		Assert.Contains("past_threshold", datasetStall);
+		Assert.Contains("dataset_url", datasetStall);
+		Assert.Contains("feed_count", datasetStall);
+		Assert.Contains("trend", datasetStall);
+
+		// Dataset-scoped like the orphaned-children monitor, so no single feed identifies it and there is
+		// no dataset-level quality score to report. The feeds it accounts for are in detail.feeds.
+		Assert.DoesNotContain("feed_id", datasetStall);
+		Assert.DoesNotContain("feed_url", datasetStall);
+		Assert.DoesNotContain("quality_score", datasetStall);
 
 		var error = schemas.GetProperty("IngestionErrorIncident").GetProperty("properties")
 			.EnumerateObject().Select(p => p.Name).ToList();

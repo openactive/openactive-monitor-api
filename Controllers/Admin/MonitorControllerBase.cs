@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using MonitorApi.Models.Admin;
 using MonitorApi.Services.Admin;
 
 namespace MonitorApi.Controllers.Admin;
@@ -80,6 +81,64 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 			IngestionStatusQuery.StatusHistoryParameters(snapshotDate.AddDays(-historyDays), snapshotDate));
 
 		return await rows.Select(IngestionStatusQuery.ParseStatusHistory).ToListAsync();
+	}
+
+	/// <summary>
+	/// Loads descriptive fields for a specific set of datasets — publisher name and dataset name, for
+	/// hydrating a dataset-scoped monitor's output.
+	/// </summary>
+	/// <remarks>
+	/// Bounded to the datasets that actually raised an incident rather than the whole estate, and
+	/// skipped entirely when nothing was detected. Shared here, like the loaders around it, so every
+	/// dataset-scoped monitor resolves publisher identity the same way.
+	/// </remarks>
+	protected async Task<Dictionary<string, DatasetMetadata>> LoadDatasetMetadata(IReadOnlyCollection<string> datasetUrls)
+	{
+		if (datasetUrls.Count == 0)
+		{
+			return [];
+		}
+
+		var rows = await Query(
+			DatasetMetadataQuery.DatasetMetadataSql(Fq(Tables.Feeds), Fq(Tables.FeedQuality)),
+			DatasetMetadataQuery.DatasetMetadataParameters(datasetUrls));
+
+		var metadata = new Dictionary<string, DatasetMetadata>(StringComparer.Ordinal);
+		await foreach (var row in rows)
+		{
+			var record = DatasetMetadataQuery.ParseDatasetMetadata(row);
+			metadata[record.DatasetUrl] = record;
+		}
+
+		return metadata;
+	}
+
+	/// <summary>
+	/// Loads descriptive fields for a specific set of feeds — name, type, URL and quality score.
+	/// </summary>
+	/// <remarks>
+	/// The feed-scoped sibling of <see cref="LoadDatasetMetadata"/>, with the same bounding: only the
+	/// feeds the monitor is about to report on.
+	/// </remarks>
+	protected async Task<Dictionary<string, FeedMetadata>> LoadFeedMetadata(IReadOnlyCollection<string> feedIds)
+	{
+		if (feedIds.Count == 0)
+		{
+			return [];
+		}
+
+		var rows = await Query(
+			IngestionHistoryQuery.FeedMetadataSql(Fq(Tables.Feeds), Fq(Tables.FeedQuality)),
+			IngestionHistoryQuery.FeedMetadataParameters(feedIds));
+
+		var metadata = new Dictionary<string, FeedMetadata>(StringComparer.Ordinal);
+		await foreach (var row in rows)
+		{
+			var record = IngestionHistoryQuery.ParseFeedMetadata(row);
+			metadata[record.FeedId] = record;
+		}
+
+		return metadata;
 	}
 
 	/// <summary>

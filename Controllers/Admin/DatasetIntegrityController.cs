@@ -109,31 +109,6 @@ public class DatasetIntegrityController(IOptions<BigQueryOptions> bigQueryOption
 		};
 
 	/// <summary>
-	/// Descriptive fields for the datasets that raised an incident — bounded to those rather than the
-	/// whole estate, and skipped entirely when nothing was detected.
-	/// </summary>
-	private async Task<Dictionary<string, DatasetMetadata>> LoadDatasetMetadata(IReadOnlyCollection<string> datasetUrls)
-	{
-		if (datasetUrls.Count == 0)
-		{
-			return [];
-		}
-
-		var rows = await Query(
-			DatasetMetadataQuery.DatasetMetadataSql(Fq(Tables.Feeds), Fq(Tables.FeedQuality)),
-			DatasetMetadataQuery.DatasetMetadataParameters(datasetUrls));
-
-		var metadata = new Dictionary<string, DatasetMetadata>(StringComparer.Ordinal);
-		await foreach (var row in rows)
-		{
-			var record = DatasetMetadataQuery.ParseDatasetMetadata(row);
-			metadata[record.DatasetUrl] = record;
-		}
-
-		return metadata;
-	}
-
-	/// <summary>
 	/// Hydrates a detected dataset into the dashboard payload. <paramref name="metadata"/> is null when
 	/// the dataset appears in <c>opportunities</c> but has no <c>feeds</c> row — one currently does —
 	/// and the incident is still reported, with the descriptive fields left empty.

@@ -20,4 +20,39 @@ public sealed record FeedIngestionHistory(
 	string FeedId,
 	string DatasetId,
 	IReadOnlyList<DateOnly> PublishedDays,
-	IReadOnlyDictionary<DateOnly, long>? RecentUpdated = null);
+	IReadOnlyDictionary<DateOnly, long>? RecentUpdated = null)
+{
+	/// <summary>
+	/// Most recent day the feed published at or before <paramref name="asOf"/>, or <c>null</c> if there
+	/// is none inside the loaded window.
+	/// </summary>
+	/// <remarks>
+	/// Lives on the history rather than in one detector because both stall monitors ask the same
+	/// question of the same record — the single-feed monitor per feed, the dataset monitor across a
+	/// dataset's feeds — and they must answer it identically for their results to partition the silence
+	/// between them. A binary search rather than a scan because the trend endpoints ask it once per feed
+	/// per day of the series.
+	/// </remarks>
+	public DateOnly? LastPublishedOnOrBefore(DateOnly asOf)
+	{
+		var low = 0;
+		var high = PublishedDays.Count - 1;
+		DateOnly? found = null;
+
+		while (low <= high)
+		{
+			var mid = low + ((high - low) / 2);
+			if (PublishedDays[mid] <= asOf)
+			{
+				found = PublishedDays[mid];
+				low = mid + 1;
+			}
+			else
+			{
+				high = mid - 1;
+			}
+		}
+
+		return found;
+	}
+}

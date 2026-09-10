@@ -109,9 +109,37 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 
 		var monitors = new List<MonitorSummarySnapshot>();
 
-		if (await SingleFeedStallSummary(snapshotDate.Value) is { } singleFeedStall)
+		// Defaults everywhere except the trend length, so each `count` agrees with what the monitor's own
+		// incidents endpoint reports; the per-incident trend columns are not used here, so their windows
+		// are collapsed to a single day rather than loading counts nothing will read.
+		var singleFeedStallThresholds = new SingleFeedStallThresholds
+		{
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+		var datasetStallThresholds = new DatasetStallThresholds
+		{
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+
+		// One load for both stall monitors: they detect on the same per-feed publishing history, one feed
+		// at a time and one dataset at a time, and running them over the very same rows is what keeps
+		// their two tiles from disagreeing about a day.
+		var histories = await LoadHistories(
+			snapshotDate.Value,
+			Math.Max(singleFeedStallThresholds.RequiredHistoryDays, datasetStallThresholds.RequiredHistoryDays),
+			trendDays: 1,
+			ignoreFirstIngestionDate: true);
+
+		if (SingleFeedStallSummary(histories, snapshotDate.Value, singleFeedStallThresholds) is { } singleFeedStall)
 		{
 			monitors.Add(singleFeedStall);
+		}
+
+		if (DatasetStallSummary(histories, snapshotDate.Value, datasetStallThresholds) is { } datasetStall)
+		{
+			monitors.Add(datasetStall);
 		}
 
 		if (await FeedIngestionErrorSummary(snapshotDate.Value) is { } feedIngestionError)
@@ -127,28 +155,36 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 		return monitors;
 	}
 
-	private async Task<MonitorSummarySnapshot?> SingleFeedStallSummary(DateOnly snapshotDate)
+	private static MonitorSummarySnapshot? SingleFeedStallSummary(
+		IReadOnlyList<FeedIngestionHistory> histories,
+		DateOnly snapshotDate,
+		SingleFeedStallThresholds thresholds)
 	{
-		// Defaults everywhere except the trend length, so `count` agrees with what
-		// /admin/single-feed-stall-incidents reports; the per-incident trend column is not used here, so
-		// its window is collapsed to a single day rather than loading counts nothing will read.
-		var thresholds = new SingleFeedStallThresholds
-		{
-			TrendDays = MonitorSummaries.SparklineDays,
-			IncidentTrendDays = 1,
-		};
-
-		var histories = await LoadHistories(
-			snapshotDate,
-			thresholds.RequiredHistoryDays,
-			thresholds.IncidentTrendDays,
-			ignoreFirstIngestionDate: true);
-
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate, thresholds)
 			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
 			.ToList();
 
 		return MonitorSummaries.Summarise(SingleFeedStallDetector.MonitorId, trend);
+	}
+
+	/// <summary>
+	/// The dataset-wide stall tile, counting datasets rather than feeds.
+	/// </summary>
+	/// <remarks>
+	/// Runs over the same histories as <see cref="SingleFeedStallSummary"/> and with the same stall
+	/// threshold, which is what makes the two tiles complementary: a silent feed is counted towards one
+	/// of them or towards the other, never towards both.
+	/// </remarks>
+	private static MonitorSummarySnapshot? DatasetStallSummary(
+		IReadOnlyList<FeedIngestionHistory> histories,
+		DateOnly snapshotDate,
+		DatasetStallThresholds thresholds)
+	{
+		var trend = DatasetStallDetector.Trend(histories, snapshotDate, thresholds)
+			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
+			.ToList();
+
+		return MonitorSummaries.Summarise(DatasetStallDetector.MonitorId, trend);
 	}
 
 	private async Task<MonitorSummarySnapshot?> FeedIngestionErrorSummary(DateOnly snapshotDate)
