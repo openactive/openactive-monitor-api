@@ -65,15 +65,29 @@ public sealed class MonitorSummary
 	/// <summary>Identifier of the monitor, matching the <c>monitor_id</c> on its incidents.</summary>
 	public required string MonitorId { get; init; }
 
-	/// <summary>Incidents open on the snapshot day — the last value of <see cref="Sparkline"/>.</summary>
+	/// <summary>
+	/// Incidents open on the snapshot day — the last value of <see cref="Sparkline"/> where there is
+	/// one.
+	/// </summary>
+	/// <remarks>
+	/// <c>dataset_orphaned_children</c> is the exception: its <c>count</c> is the total number of
+	/// orphaned children across the estate rather than a count of incidents, because one dataset can
+	/// account for hundreds of thousands of them. Read its incidents endpoint's <c>meta.total</c> for
+	/// the number of datasets involved.
+	/// </remarks>
 	public required int Count { get; init; }
 
-	/// <summary>Subset of <see cref="Count"/> that has passed the monitor's escalation threshold.</summary>
+	/// <summary>
+	/// Subset of <see cref="Count"/> that has passed the monitor's escalation threshold. Always
+	/// <c>0</c> for <c>dataset_orphaned_children</c>, whose threshold applies to datasets rather than
+	/// to the orphan total its <see cref="Count"/> reports.
+	/// </summary>
 	public required int PastThresholdCount { get; init; }
 
 	/// <summary>
 	/// Open counts over the trailing week, oldest first, ending on the snapshot day. Shorter than seven
-	/// entries only when less history is available.
+	/// entries when less history is available, and <b>empty</b> for a monitor with no history at all —
+	/// <c>dataset_orphaned_children</c> reads a current-state table, so it never has a series.
 	/// </summary>
 	public required IReadOnlyList<int> Sparkline { get; init; }
 }

@@ -108,7 +108,7 @@ public static class SingleFeedStallDetector
 	/// </summary>
 	private static SingleFeedStall? Evaluate(FeedIngestionHistory feed, DateOnly asOf, SingleFeedStallThresholds thresholds)
 	{
-		var lastPublished = LastPublishOnOrBefore(feed.PublishedDays, asOf);
+		var lastPublished = feed.LastPublishedOnOrBefore(asOf);
 		if (lastPublished is null)
 		{
 			// Never published inside the loaded window — nothing to say it ever worked.
@@ -146,7 +146,7 @@ public static class SingleFeedStallDetector
 
 		foreach (var feed in feeds)
 		{
-			var lastPublished = LastPublishOnOrBefore(feed.PublishedDays, asOf);
+			var lastPublished = feed.LastPublishedOnOrBefore(asOf);
 			var silent = lastPublished is null || asOf.DayNumber - lastPublished.Value.DayNumber >= thresholds.StallDays;
 
 			silentByDataset[feed.DatasetId] = silentByDataset.TryGetValue(feed.DatasetId, out var allSilent)
@@ -184,32 +184,5 @@ public static class SingleFeedStallDetector
 		}
 
 		return trend;
-	}
-
-	/// <summary>
-	/// Most recent publishing day at or before <paramref name="asOf"/>, or <c>null</c> if there is none.
-	/// <paramref name="days"/> must be sorted ascending.
-	/// </summary>
-	private static DateOnly? LastPublishOnOrBefore(IReadOnlyList<DateOnly> days, DateOnly asOf)
-	{
-		var low = 0;
-		var high = days.Count - 1;
-		DateOnly? found = null;
-
-		while (low <= high)
-		{
-			var mid = low + ((high - low) / 2);
-			if (days[mid] <= asOf)
-			{
-				found = days[mid];
-				low = mid + 1;
-			}
-			else
-			{
-				high = mid - 1;
-			}
-		}
-
-		return found;
 	}
 }

@@ -58,7 +58,8 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var histories = await LoadHistories(
 			snapshotDate.Value,
 			thresholds.LookbackDays + thresholds.IncidentTrendDays,
-			thresholds.IncidentTrendDays);
+			thresholds.IncidentTrendDays,
+			ignoreFirstIngestionDate: true);
 		var stalls = SingleFeedStallDetector.Detect(histories, snapshotDate.Value, thresholds);
 
 		var metadata = await LoadFeedMetadata(stalls.Select(s => s.FeedId).ToList());
@@ -108,7 +109,8 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var histories = await LoadHistories(
 			snapshotDate.Value,
 			thresholds.RequiredHistoryDays,
-			thresholds.IncidentTrendDays);
+			thresholds.IncidentTrendDays,
+			ignoreFirstIngestionDate: true);
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate.Value, thresholds);
 
 		var points = trend
@@ -137,27 +139,6 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		return trendDays is null
 			? thresholds
 			: thresholds with { TrendDays = Math.Clamp(trendDays.Value, 1, 365) };
-	}
-
-	private async Task<Dictionary<string, FeedMetadata>> LoadFeedMetadata(IReadOnlyCollection<string> feedIds)
-	{
-		if (feedIds.Count == 0)
-		{
-			return [];
-		}
-
-		var rows = await Query(
-			IngestionHistoryQuery.FeedMetadataSql(Fq(Tables.Feeds), Fq(Tables.FeedQuality)),
-			IngestionHistoryQuery.FeedMetadataParameters(feedIds));
-
-		var metadata = new Dictionary<string, FeedMetadata>();
-		await foreach (var row in rows)
-		{
-			var record = IngestionHistoryQuery.ParseFeedMetadata(row);
-			metadata[record.FeedId] = record;
-		}
-
-		return metadata;
 	}
 
 	/// <summary>

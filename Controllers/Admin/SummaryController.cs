@@ -37,6 +37,15 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 	/// first. Note that this day is the ingestion table's latest day and may differ from
 	/// <c>meta.snapshot_date</c>, which dates the coverage figures.
 	///
+	/// <c>dataset_orphaned_children</c> is the exception to all of that. Its <c>count</c> is the total
+	/// number of orphaned children across the estate — a count of broken items, not of datasets — so it
+	/// does <em>not</em> match its incidents endpoint's <c>meta.total</c>, which counts the datasets
+	/// responsible. It reads <c>opportunities</c>, a current-state mirror with no per-day snapshots, so
+	/// it has no trend endpoint, its <c>sparkline</c> is always empty and its
+	/// <c>past_threshold_count</c> is always <c>0</c> (that threshold applies to datasets, not to this
+	/// total). Its day-on-day change is unknowable rather than zero, so it contributes nothing to the
+	/// <c>*_delta</c> figures below rather than dragging them towards zero.
+	///
 	/// The three <c>*_delta</c> fields are day-on-day changes: the latest day's figure minus the
 	/// previous day's, summed across monitors. Positive means the estate got worse.
 	///
@@ -100,35 +109,138 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 
 		var monitors = new List<MonitorSummarySnapshot>();
 
-		if (await SingleFeedStallSummary(snapshotDate.Value) is { } singleFeedStall)
+		// Defaults everywhere except the trend length, so each `count` agrees with what the monitor's own
+		// incidents endpoint reports; the per-incident trend columns are not used here, so their windows
+		// are collapsed to a single day rather than loading counts nothing will read.
+		var singleFeedStallThresholds = new SingleFeedStallThresholds
 		{
-			monitors.Add(singleFeedStall);
-		}
-
-		return monitors;
-	}
-
-	private async Task<MonitorSummarySnapshot?> SingleFeedStallSummary(DateOnly snapshotDate)
-	{
-		// Defaults everywhere except the trend length, so `count` agrees with what
-		// /admin/single-feed-stall-incidents reports; the per-incident trend column is not used here, so
-		// its window is collapsed to a single day rather than loading counts nothing will read.
-		var thresholds = new SingleFeedStallThresholds
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+		var datasetStallThresholds = new DatasetStallThresholds
 		{
 			TrendDays = MonitorSummaries.SparklineDays,
 			IncidentTrendDays = 1,
 		};
 
+		// One load for both stall monitors: they detect on the same per-feed publishing history, one feed
+		// at a time and one dataset at a time, and running them over the very same rows is what keeps
+		// their two tiles from disagreeing about a day.
 		var histories = await LoadHistories(
-			snapshotDate,
-			thresholds.RequiredHistoryDays,
-			thresholds.IncidentTrendDays);
+			snapshotDate.Value,
+			Math.Max(singleFeedStallThresholds.RequiredHistoryDays, datasetStallThresholds.RequiredHistoryDays),
+			trendDays: 1,
+			ignoreFirstIngestionDate: true);
 
+		if (SingleFeedStallSummary(histories, snapshotDate.Value, singleFeedStallThresholds) is { } singleFeedStall)
+		{
+			monitors.Add(singleFeedStall);
+		}
+
+		if (DatasetStallSummary(histories, snapshotDate.Value, datasetStallThresholds) is { } datasetStall)
+		{
+			monitors.Add(datasetStall);
+		}
+
+		if (await FeedIngestionErrorSummary(snapshotDate.Value) is { } feedIngestionError)
+		{
+			monitors.Add(feedIngestionError);
+		}
+
+		if (await OrphanedChildrenSummary() is { } orphanedChildren)
+		{
+			monitors.Add(orphanedChildren);
+		}
+
+		return monitors;
+	}
+
+	private static MonitorSummarySnapshot? SingleFeedStallSummary(
+		IReadOnlyList<FeedIngestionHistory> histories,
+		DateOnly snapshotDate,
+		SingleFeedStallThresholds thresholds)
+	{
 		var trend = SingleFeedStallDetector.Trend(histories, snapshotDate, thresholds)
 			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
 			.ToList();
 
 		return MonitorSummaries.Summarise(SingleFeedStallDetector.MonitorId, trend);
+	}
+
+	/// <summary>
+	/// The dataset-wide stall tile, counting datasets rather than feeds.
+	/// </summary>
+	/// <remarks>
+	/// Runs over the same histories as <see cref="SingleFeedStallSummary"/> and with the same stall
+	/// threshold, which is what makes the two tiles complementary: a silent feed is counted towards one
+	/// of them or towards the other, never towards both.
+	/// </remarks>
+	private static MonitorSummarySnapshot? DatasetStallSummary(
+		IReadOnlyList<FeedIngestionHistory> histories,
+		DateOnly snapshotDate,
+		DatasetStallThresholds thresholds)
+	{
+		var trend = DatasetStallDetector.Trend(histories, snapshotDate, thresholds)
+			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
+			.ToList();
+
+		return MonitorSummaries.Summarise(DatasetStallDetector.MonitorId, trend);
+	}
+
+	private async Task<MonitorSummarySnapshot?> FeedIngestionErrorSummary(DateOnly snapshotDate)
+	{
+		// Defaults everywhere except the trend length, so `count` agrees with what
+		// /admin/feed-ingestion-error-incidents reports; the per-incident status strip is not used here,
+		// so its window is collapsed to a single day.
+		var thresholds = new FeedIngestionErrorThresholds
+		{
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+
+		var histories = await LoadStatusHistories(snapshotDate, thresholds.RequiredHistoryDays);
+
+		var trend = FeedIngestionErrorDetector.Trend(histories, snapshotDate, thresholds)
+			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
+			.ToList();
+
+		return MonitorSummaries.Summarise(FeedIngestionErrorDetector.MonitorId, trend);
+	}
+
+	/// <summary>
+	/// The orphaned-children tile. <c>count</c> is the total number of orphaned children across the
+	/// estate, not the number of datasets reporting them.
+	/// </summary>
+	/// <remarks>
+	/// The one tile whose <c>count</c> is not an incident count. The other monitors answer "how many
+	/// feeds are broken"; the useful headline here is the size of the defect itself, since a single
+	/// dataset routinely accounts for hundreds of thousands of orphans. The number of datasets is
+	/// <c>meta.total</c> on /admin/dataset-orphaned-children-incidents.
+	///
+	/// Built directly rather than through <see cref="MonitorSummaries.Summarise"/>, which derives its
+	/// figures from a daily trend this monitor does not have. <c>past_threshold_count</c> is zero and
+	/// <c>sparkline</c> empty: the escalation threshold applies to datasets rather than to this total,
+	/// so counting it here would mix two units, and <c>opportunities</c> holds no history to draw a
+	/// series from. Both deltas are null, which
+	/// <see cref="MonitorSummaries.TotalDelta"/> skips rather than counting as zero, so the headline
+	/// deltas stay the sum of the monitors that do have a yesterday.
+	/// </remarks>
+	private async Task<MonitorSummarySnapshot?> OrphanedChildrenSummary()
+	{
+		var counts = await LoadOrphanCounts();
+		var incidents = OrphanedChildrenDetector.Detect(counts, new OrphanedChildrenThresholds());
+
+		var orphans = incidents.Sum(i => i.OrphanCount);
+
+		return new MonitorSummarySnapshot(
+			OrphanedChildrenDetector.MonitorId,
+			// The estate's orphan total. Clamped into int for the shared tile shape; the true figure is
+			// six digits today, so there is a lot of headroom before this could bite.
+			(int)Math.Clamp(orphans, 0, int.MaxValue),
+			PastThresholdCount: 0,
+			Sparkline: [],
+			CountDelta: null,
+			PastThresholdDelta: null);
 	}
 
 	#endregion
