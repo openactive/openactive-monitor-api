@@ -27,7 +27,7 @@ routes). With 30+ endpoints planned, one controller per monitor family, not per 
 ## Steps
 
 1. **Controller.** Derive from `AdminControllerBase`, which supplies the `admin` route prefix, the
-   `AdminToken` check and the fifteen-minute output cache:
+   `AdminToken` check and the daily output cache:
 
    ```csharp
    public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOptions<ApiOptions> apiOptions)

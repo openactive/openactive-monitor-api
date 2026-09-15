@@ -84,6 +84,37 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 	}
 
 	/// <summary>
+	/// Loads per-feed daily forward-supply history for the window the future-decline monitor needs — the
+	/// third sibling of <see cref="LoadHistories"/> and <see cref="LoadStatusHistories"/>, for the monitor
+	/// that detects on the <em>level</em> of a feed's supply rather than on how much it published or how
+	/// its runs ended.
+	/// </summary>
+	/// <param name="snapshotDate">The day the analysis runs against; the window ends here.</param>
+	/// <param name="historyDays">Days of supply history to load before <paramref name="snapshotDate"/>.</param>
+	/// <param name="ignoredKinds">
+	/// Feed kinds to leave out of the history entirely, so the monitor never sees them. Passed in by the
+	/// caller rather than fixed here, so the endpoints and the summary tile that must agree can be seen to
+	/// share one list.
+	/// </param>
+	/// <remarks>
+	/// Only <c>COMPLETE</c> runs come back, so the earliest ingestion date needs no special handling: the
+	/// initial bulk load inflates what a feed published that day, but the forward supply it reported
+	/// afterwards is a real measurement and is the first point any comparison can start from.
+	/// </remarks>
+	protected async Task<List<FeedFutureSupplyHistory>> LoadFutureSupply(
+		DateOnly snapshotDate,
+		int historyDays,
+		IEnumerable<string> ignoredKinds)
+	{
+		var rows = await Query(
+			FutureSupplyQuery.FutureSupplySql(Fq(Tables.OpportunityIngestion)),
+			FutureSupplyQuery.FutureSupplyParameters(
+				snapshotDate.AddDays(-historyDays), snapshotDate, ignoredKinds));
+
+		return await rows.Select(FutureSupplyQuery.ParseFutureSupply).ToListAsync();
+	}
+
+	/// <summary>
 	/// Loads descriptive fields for a specific set of datasets — publisher name and dataset name, for
 	/// hydrating a dataset-scoped monitor's output.
 	/// </summary>

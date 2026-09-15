@@ -24,6 +24,8 @@ http://localhost:5268/admin/dataset-stall-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-incidents?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
 http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToken>
+http://localhost:5268/admin/dataset-future-decline-incidents?token=<AdminToken>
+http://localhost:5268/admin/dataset-future-decline-trend?token=<AdminToken>
 ```
 
 ## API reference
@@ -111,6 +113,12 @@ unhealthy, and one line per monitor. Takes no parameters.
         "count": 6,
         "past_threshold_count": 1,
         "sparkline": [1, 2, 1, 1, 6, 1, 6]
+      },
+      {
+        "monitor_id": "dataset_future_decline",
+        "count": 7,
+        "past_threshold_count": 2,
+        "sparkline": [9, 11, 8, 10, 8, 9, 7]
       },
       {
         "monitor_id": "dataset_orphaned_children",
@@ -613,6 +621,188 @@ Field notes:
   the null.
 - `quality_score` — `feed_quality.score` is per-feed and there is no dataset-level equivalent.
 
+### `GET /admin/dataset-future-decline-incidents`
+
+Datasets whose forward supply is draining, ordered by the largest loss first. The signal is
+`total_future_opportunities` — how much a publisher still has on offer — so an incident here means
+consumers are running out of things to book, whether or not anything looks broken. It is the gap the
+other four monitors leave between them: these feeds are ingesting successfully every day and simply
+have less to give each time.
+
+A feed raises an incident when it completed at least three runs inside the last `window_days` days,
+carried at least `min_future_opportunities` at the first of them, **and** then either fell at *every*
+observation in the window, however gently, **or** lost at least `drop_percent` of its supply between two
+consecutive observations. The two rules are independent and either is enough.
+
+It is then **reported** only if it also clears a qualifying gate over the longer `qualify_window_days`
+window: either it has lost at least `qualify_drop_percent` of its supply across that window, **or** its
+`updated − actual_deletes` across the detection window is negative. Detection is deliberately sensitive
+and finds plenty of wobble; the gate is what separates a slide worth an operator's morning from noise.
+On 2026-09-15 it took the list from 11 datasets to 7.
+
+The rules worth knowing:
+
+- **Only `COMPLETE` ingestion runs are read.** A feed that failed or was not polled has no observation
+  that day at all. That is what keeps a publisher's outage — already reported by the stall and
+  ingestion-error monitors — from being turned into a second, duplicate incident with a bogus fall to
+  zero.
+- **Comparisons are between consecutive observations, not consecutive calendar days.** A missing day
+  neither breaks a run of falls nor invents a drop across the gap it leaves.
+- **The gate's two clauses catch different things.** A steep slide qualifies on the drop however
+  healthily the feed publishes. A shallow one qualifies only if the feed is removing more than it adds,
+  which is what tells erosion apart from a publisher whose catalogue is simply smaller this week. Only
+  the second clause reads `updated` and `actual_deletes`; neither *raises* an incident, and the rules
+  that do read supply alone.
+- **The drop clause looks back further than detection does.** A slide that has been running for a
+  fortnight reads as trivial through a five-day slot — `qualify_drop_percent` is measured over
+  `qualify_window_days`, so the ten-day figure is the one that decides. The delta, by contrast, is
+  summed over the five-day detection window only: deletions older than that do not resurrect a feed.
+- **`qualify_window_days` is never treated as shorter than `window_days`**, so the days it judges are
+  always a superset of the days the decline was found in.
+- **`Slot` feeds are excluded entirely.** A slot count says how far ahead a publisher has opened
+  bookings, not how much it has to offer, so it falls every time that rolling window shortens — a
+  decline that means nothing. Session, session-series and facility-use feeds carry the real signal. The
+  list lives on `DatasetSupplyController.IgnoredKinds` and is shared with the `/admin/summary` tile so
+  the two cannot disagree.
+- **The monotonic rule exists because a percentage threshold cannot see erosion.** A feed shedding two
+  percent a day loses a tenth of its supply a week and never trips a single-step threshold; one that
+  halves overnight and then holds never trips a cumulative one. `detail.reason` says which fired, and is
+  `both` where the dataset's feeds between them did each.
+- **The dataset is the incident and `detail.feeds` names the feeds responsible.** Its totals cover only
+  those feeds, never the dataset's healthy ones, so `drop` and `drop_percent` always describe the same
+  thing. A dataset's healthy feed is simply not in the list.
+- **`past_threshold` follows the percentage, not the raw loss**, so a small publisher losing most of
+  what it had escalates alongside a large one losing a quarter.
+- **A dataset can appear here and on a stall monitor at once.** They answer different questions: a feed
+  that is polled daily, publishes nothing new and watches its listings expire is both silent and
+  draining. That is not double-reporting, it is two true statements, and the supply figure is the one
+  that says how urgent it is.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `window_days` | `5` | Trailing days the decline is measured over |
+| `drop_percent` | `10` | Percentage lost between two consecutive runs that raises an incident on its own |
+| `qualify_window_days` | `10` | Longer window the decline must also show up over; never treated as shorter than `window_days` |
+| `qualify_drop_percent` | `10` | Percentage that must have been lost across `qualify_window_days`, unless the feed's delta is negative |
+| `past_threshold_drop_percent` | `25` | Net percentage lost across the window that sets `past_threshold`; never treated as looser than `drop_percent` |
+| `min_future_opportunities` | `50` | Forward supply a feed must have had at the start of the window to be worth reporting |
+| `as_of` | latest ingestion day | Evaluate as at this date (`yyyy-MM-dd`) instead of the snapshot date |
+
+A feed needs three observations inside the window, or the whole window where that is shorter, and never
+fewer than two — so `window_days=1` reports nothing rather than everything. The `trend` column always
+covers the trailing ten days, independently of `window_days`.
+
+```json
+{
+  "monitor_id": "dataset_future_decline",
+  "publisher_id": "pub_better-better-admin",
+  "publisher_name": "Better (better-admin)",
+  "dataset_url": "https://better-admin.org.uk/api/openactive/better",
+  "dataset_name": "Better Sessions and Facilities",
+  "feed_count": 1,
+  "first_detected": "2026-09-11",
+  "days_open": 4,
+  "consecutive_days": 4,
+  "past_threshold": false,
+  "status": "open",
+  "last_contacted": null,
+  "trend": [206069, 202140, 198974, 196018, 193009, 190167, 187137, 183814, 180114, 177186],
+  "detail": {
+    "reason": "monotonic_decline",
+    "window_days": 5,
+    "start_total": 190167,
+    "current_total": 177186,
+    "drop": 12981,
+    "drop_percent": 6.83,
+    "qualify_window_days": 10,
+    "qualify_start_total": 206069,
+    "qualify_drop_percent": 14.02,
+    "feeds": [
+      {
+        "feed_id": "better-admin-org-uk-api-openactive-better-scheduled-sessions",
+        "feed_name": "scheduled-sessions",
+        "reason": "monotonic_decline",
+        "start_future": 190167,
+        "current_future": 177186,
+        "drop": 12981,
+        "drop_percent": 6.83,
+        "qualify_start_future": 206069,
+        "qualify_drop_percent": 14.02,
+        "consecutive_declining_days": 4,
+        "largest_daily_drop_percent": 2.01,
+        "updated_in_window": 332,
+        "deletes_in_window": 16131,
+        "delta_in_window": -15799
+      }
+    ]
+  }
+}
+```
+
+Field notes:
+
+- The incident's identity is `dataset_url`, matching `feeds.dataset_url`. `dataset_name` is the stored
+  `feed_quality.dataset_name`, falling back to the host of the URL, so it is never empty.
+- `feed_count` is the number of **declining** feeds, not the dataset's feed count. It always equals
+  `detail.feeds.length`.
+- `first_detected` is the day the decline began: the start of the unbroken run of falls that ends the
+  window, or — when the window does not end in a fall — the day the steepest drop fell from. It is
+  always inside the window, so `days_open` never exceeds `window_days - 1`, and `consecutive_days`
+  always equals it.
+- `detail.start_total` and `detail.current_total` are the contributing feeds' supply at the first and
+  last observation in the window; `drop` is the difference and `drop_percent` that difference over
+  `start_total`, to two decimal places. A dataset's own feeds may each have fallen over different pairs
+  of days, which is why the per-feed figures are given too.
+- `detail.feeds[].largest_daily_drop_percent` is the steepest single step down in the window — the
+  figure the `sharp_drop` rule tests. For a monotonic decline it is simply the worst of many small falls
+  and may be well under `drop_percent`.
+- `detail.feeds[].updated_in_window` and `deletes_in_window` are **context and never raise anything**.
+  Read together they say what kind of decline it is: the sample above shows 15,368 deletions against
+  309 updates, a feed removing far more than it adds. A fall with no deletions behind it is supply
+  quietly expiring because nothing new is being scheduled.
+- `trend` is the contributing feeds' daily `total_future_opportunities` over the trailing **ten days**,
+  oldest first, ending on `snapshot_date`. Always ten entries, so entry *i* is the same day for every
+  incident in the response, and it covers the healthy days before the decline began because the supply
+  the dataset used to carry is the point of the column.
+  - `null` — no contributing feed completed a run that day, so nothing is known. Not the same as zero.
+- `status` is always `open` and `last_contacted` always `null`, as on every monitor.
+- There is no `feed_id`, `feed_name`, `feed_type`, `feed_url` or `quality_score`: the incident is about
+  a dataset, its feeds are in `detail.feeds`, and `feed_quality.score` is per-feed with no dataset-level
+  equivalent. As on the two other dataset-scoped monitors, these are absent rather than always-null.
+
+### `GET /admin/dataset-future-decline-trend`
+
+Counts of datasets losing forward supply on each of the last `trend_days` days, oldest first. Each day
+is evaluated independently against the same rules as the incidents endpoint, so a point shows what that
+endpoint would have reported on that day — the final point always agrees with it.
+`past_threshold_count` is always a subset of `open_count`. Counts are of **datasets**, so a publisher
+with six draining feeds is one, not six.
+
+Accepts `page`, `page_size`, `window_days`, `drop_percent`, `qualify_window_days`,
+`qualify_drop_percent`, `past_threshold_drop_percent`, `min_future_opportunities`, `as_of` as above,
+applies the same qualifying gate and excludes the same kinds, plus:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `trend_days` | `30` | Days of history to return |
+
+```json
+{
+  "data": [
+    { "date": "2026-09-12", "open_count": 18, "past_threshold_count": 4 },
+    { "date": "2026-09-13", "open_count": 15, "past_threshold_count": 3 },
+    { "date": "2026-09-14", "open_count": 10, "past_threshold_count": 0 }
+  ],
+  "meta": { "snapshot_date": "2026-09-14", "generated_at": "2026-09-14T15:22:37Z", "page": 1, "page_size": 500, "total": 30 }
+}
+```
+
+Expect this series to move about far more than the stall ones. A stall persists until a feed publishes
+again; a decline is a statement about a five-day window, so a dataset leaves the list as soon as one
+good day pushes the fall out of it.
+
 The **spine every monitor's incidents share**, and all the dashboard should rely on across them, is
 `monitor_id`, `publisher_id`, `publisher_name`, `past_threshold`, `status` and `last_contacted`.
 Everything else, including which entity the incident is about, is monitor-specific.
@@ -624,8 +814,11 @@ The feed-health monitors read `opportunity_ingestion` (daily ingestion result pe
 the same per-feed publishing history — one feed at a time, one dataset at a time — which is what lets
 them partition the silence between them rather than each having its own idea of it. The orphaned-children monitor reads
 `opportunities` instead — see below. Multiple ingestion runs on the same day are
-collapsed into one day — summed for the stall monitors' `updated` counts, and collapsed with success
-winning for the error monitors' status.
+collapsed into one day — summed for the stall monitors' `updated` counts, collapsed with success
+winning for the error monitors' status, and taken from the day's **last completed run** for the
+future-decline monitor, because `total_future_opportunities` is a level rather than a counter and must
+not be added up. That monitor reads only `status = 'COMPLETE'` rows, so a failed or missing run leaves
+a gap in its history rather than a figure.
 
 `error_code` and `warning_message` were added to the table recently and are populated only for the most
 recent days; older `ERROR` rows carry neither.
@@ -666,7 +859,11 @@ with no `ingestion_date` and so no history of any kind. Consequences:
   `dataset-stall-incidents` is a short list — a single dataset on 2026-09-10 — while
   `single-feed-stall-incidents` runs to dozens. That ratio is the monitor working, not a gap in it.
 - The ingestion error monitor's 15-day success lookback is inside what the table holds, so it is the one
-  window the data can currently exercise in full.
+  window the data can currently exercise in full. So is the future-decline monitor's five-day window,
+  which is the other; its 30-day trend, though, can only have points for the days the table covers.
+- The duplicated day and the missing one are both absorbed by the future-decline monitor without
+  special handling: same-day runs collapse to one figure, and a missing day is simply one fewer
+  observation in the window rather than a fall.
 
 ## Tests
 
@@ -685,12 +882,14 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~OrphanedChildrenDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~DatasetFutureDeclineDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~AdminSlugTests"
 ```
 
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
-`Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs` and
-`Services/Admin/OrphanedChildrenMonitor.cs`, and the
+`Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs`,
+`Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, and the
 summary arithmetic in `Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and
 ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The

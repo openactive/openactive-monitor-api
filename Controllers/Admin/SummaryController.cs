@@ -147,6 +147,11 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 			monitors.Add(feedIngestionError);
 		}
 
+		if (await DatasetFutureDeclineSummary(snapshotDate.Value) is { } datasetFutureDecline)
+		{
+			monitors.Add(datasetFutureDecline);
+		}
+
 		if (await OrphanedChildrenSummary() is { } orphanedChildren)
 		{
 			monitors.Add(orphanedChildren);
@@ -205,6 +210,38 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 			.ToList();
 
 		return MonitorSummaries.Summarise(FeedIngestionErrorDetector.MonitorId, trend);
+	}
+
+	/// <summary>
+	/// The forward-supply tile, counting datasets whose supply is draining.
+	/// </summary>
+	/// <remarks>
+	/// Loaded separately from the stall monitors rather than folded into their single
+	/// <see cref="MonitorControllerBase.LoadHistories"/> call: this monitor reads a different column of
+	/// <c>opportunity_ingestion</c> and only the runs that completed, so there is no shared verdict for
+	/// one load to keep consistent.
+	/// </remarks>
+	private async Task<MonitorSummarySnapshot?> DatasetFutureDeclineSummary(DateOnly snapshotDate)
+	{
+		// Defaults everywhere except the trend length, so `count` agrees with what
+		// /admin/dataset-future-decline-incidents reports; the per-incident trend column is not used here,
+		// so its window is collapsed to a single day.
+		var thresholds = new DatasetFutureDeclineThresholds
+		{
+			TrendDays = MonitorSummaries.SparklineDays,
+			IncidentTrendDays = 1,
+		};
+
+		// The very same exclusion list the endpoints use, so the tile cannot count a kind the incidents
+		// endpoint leaves out.
+		var histories = await LoadFutureSupply(
+			snapshotDate, thresholds.RequiredHistoryDays, DatasetSupplyController.IgnoredKinds);
+
+		var trend = DatasetFutureDeclineDetector.Trend(histories, snapshotDate, thresholds)
+			.Select(p => new MonitorTrendPoint(p.Date, p.OpenCount, p.PastThresholdCount))
+			.ToList();
+
+		return MonitorSummaries.Summarise(DatasetFutureDeclineDetector.MonitorId, trend);
 	}
 
 	/// <summary>

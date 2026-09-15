@@ -20,6 +20,8 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/feed-ingestion-error-incidents",
 		"/admin/feed-ingestion-error-trend",
 		"/admin/dataset-orphaned-children-incidents",
+		"/admin/dataset-future-decline-incidents",
+		"/admin/dataset-future-decline-trend",
 	];
 
 	[Theory]

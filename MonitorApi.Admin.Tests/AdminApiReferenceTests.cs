@@ -35,6 +35,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/feed-ingestion-error-incidents", paths);
 		Assert.Contains("/admin/feed-ingestion-error-trend", paths);
 		Assert.Contains("/admin/dataset-orphaned-children-incidents", paths);
+		Assert.Contains("/admin/dataset-future-decline-incidents", paths);
+		Assert.Contains("/admin/dataset-future-decline-trend", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -47,6 +49,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	// No date parameter of any kind: opportunities holds current state only, so a past date cannot be
 	// answered and there is nothing to window.
 	[InlineData("/admin/dataset-orphaned-children-incidents", "page,page_size,min_orphans,past_threshold_orphans")]
+	[InlineData("/admin/dataset-future-decline-incidents", "page,page_size,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
+	[InlineData("/admin/dataset-future-decline-trend", "page,page_size,trend_days,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
 	public async Task AdminDocument_DocumentsTheQueryParametersWithTheirDefaults(string path, string expected)
 	{
 		using var client = _fixture.CreateClient();
@@ -116,6 +120,37 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.DoesNotContain("first_detected", orphans);
 		Assert.DoesNotContain("trend", orphans);
 		Assert.DoesNotContain("quality_score", orphans);
+
+		var decline = schemas.GetProperty("DatasetFutureDeclineIncident").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("monitor_id", decline);
+		Assert.Contains("past_threshold", decline);
+		Assert.Contains("dataset_url", decline);
+		Assert.Contains("feed_count", decline);
+		Assert.Contains("trend", decline);
+
+		// Dataset-scoped for the same reasons as the two above: the publisher is who gets contacted, and
+		// the feeds actually losing supply are in detail.feeds with their own figures.
+		Assert.DoesNotContain("feed_id", decline);
+		Assert.DoesNotContain("feed_url", decline);
+		Assert.DoesNotContain("quality_score", decline);
+
+		var declineDetail = schemas.GetProperty("DatasetFutureDeclineIncidentDetail").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("reason", declineDetail);
+		Assert.Contains("drop", declineDetail);
+		Assert.Contains("drop_percent", declineDetail);
+		Assert.Contains("qualify_window_days", declineDetail);
+		Assert.Contains("qualify_drop_percent", declineDetail);
+		Assert.Contains("feeds", declineDetail);
+
+		var declineFeed = schemas.GetProperty("DatasetFutureDeclineFeed").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("qualify_drop_percent", declineFeed);
+		Assert.Contains("delta_in_window", declineFeed);
 
 		var errorDetail = schemas.GetProperty("IngestionErrorIncidentDetail").GetProperty("properties")
 			.EnumerateObject().Select(p => p.Name).ToList();
