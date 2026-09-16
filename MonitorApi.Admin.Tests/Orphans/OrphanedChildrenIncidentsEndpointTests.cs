@@ -63,9 +63,11 @@ public class OrphanedChildrenIncidentsEndpointTests(AdminApiFixture fixture) : I
 			Assert.Equal("open", incident.Status);
 			Assert.Null(incident.LastContacted);
 
-			// Default thresholds: open on the first orphan, escalated at a hundred.
-			Assert.True(incident.OrphanCount >= 1);
-			Assert.Equal(incident.OrphanCount >= 100, incident.PastThreshold);
+			// Default thresholds: a thousand orphans and a tenth of the dataset to open, ten thousand
+			// to escalate.
+			Assert.True(incident.OrphanCount >= 1_000);
+			Assert.True(incident.OrphanShare >= 0.10);
+			Assert.Equal(incident.OrphanCount >= 10_000, incident.PastThreshold);
 
 			// Only examined children can be orphans, and only real children can be examined.
 			Assert.True(incident.OrphanCount <= incident.CheckedCount);
@@ -191,6 +193,39 @@ public class OrphanedChildrenIncidentsEndpointTests(AdminApiFixture fixture) : I
 
 		Assert.Empty(beyond.Data);
 		Assert.Equal(all.Meta.Total, beyond.Meta.Total);
+	}
+
+	[Fact]
+	public async Task LoweringTheGates_NeverReportsFewerIncidents()
+	{
+		// The complement of the two monotonicity tests around it: the defaults are a filter over the
+		// same detected set, not a different query, so opening them fully can only add datasets.
+		var defaults = await Get();
+		var wideOpen = await Get("?min_orphans=1&min_share=0&page_size=1000");
+
+		Assert.True(wideOpen.Meta.Total >= defaults.Meta.Total);
+		Assert.Empty(defaults.Data.Select(i => i.DatasetUrl)
+			.Except(wideOpen.Data.Select(i => i.DatasetUrl)));
+	}
+
+	[Fact]
+	public async Task RaisingMinShare_NeverReportsMoreIncidentsAndHoldsTheFloor()
+	{
+		var strict = await Get("?min_share=0.9&page_size=1000");
+		var loose = await Get();
+
+		Assert.True(strict.Meta.Total <= loose.Meta.Total);
+		Assert.All(strict.Data, incident => Assert.True(incident.OrphanShare >= 0.9));
+	}
+
+	[Fact]
+	public async Task AMinShareAboveOne_IsClampedRatherThanEmptyingThePage()
+	{
+		// Clamped to one and compared inclusively, so what is left is the wholly orphaned datasets
+		// rather than nothing at all.
+		var page = await Get("?min_share=5&page_size=1000");
+
+		Assert.All(page.Data, incident => Assert.Equal(1.0, incident.OrphanShare, precision: 10));
 	}
 
 	[Fact]

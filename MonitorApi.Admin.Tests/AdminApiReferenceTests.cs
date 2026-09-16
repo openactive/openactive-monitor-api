@@ -48,7 +48,7 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	[InlineData("/admin/feed-ingestion-error-trend", "page,page_size,trend_days,success_lookback_days,error_days,past_threshold_days,as_of")]
 	// No date parameter of any kind: opportunities holds current state only, so a past date cannot be
 	// answered and there is nothing to window.
-	[InlineData("/admin/dataset-orphaned-children-incidents", "page,page_size,min_orphans,past_threshold_orphans")]
+	[InlineData("/admin/dataset-orphaned-children-incidents", "page,page_size,min_orphans,min_share,past_threshold_orphans")]
 	[InlineData("/admin/dataset-future-decline-incidents", "page,page_size,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
 	[InlineData("/admin/dataset-future-decline-trend", "page,page_size,trend_days,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
 	public async Task AdminDocument_DocumentsTheQueryParametersWithTheirDefaults(string path, string expected)

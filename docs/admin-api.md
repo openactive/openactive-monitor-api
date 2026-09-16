@@ -156,7 +156,9 @@ Field notes:
   only when less history exists, and is never padded.
   - `dataset_orphaned_children` is the exception to all of this. Its `count` is the **total number of
     orphaned children across the estate** — a count of broken items, not of datasets — so it does
-    *not* equal its incidents endpoint's `meta.total`, which counts the datasets responsible. The
+    *not* equal its incidents endpoint's `meta.total`, which counts the datasets responsible. It sums
+    only the datasets that clear that endpoint's default gates (`min_orphans` and `min_share`), so the
+    two stay consistent: 764,132 orphans across 12 datasets on 2026-09-15. The
     headline is the size of the defect, because a single dataset routinely accounts for hundreds of
     thousands of orphans. It reads `opportunities`, which holds no history, so it has no trend
     endpoint, its `sparkline` is always **empty**, and its `past_threshold_count` is always `0` (that
@@ -519,13 +521,17 @@ Two things to expect in the series:
 
 ### `GET /admin/dataset-orphaned-children-incidents`
 
-Datasets publishing children whose parent event is missing from the same dataset, ordered worst first.
+Datasets publishing children that are unplaceable: their parent event is missing from the same dataset
+*and* they carry no location of their own. Ordered worst first.
 
 An OpenActive child names its parent through `has_superEvent`: a `Slot` names its `FacilityUse`, a
 `ScheduledSession` names its `SessionSeries`. When that reference points at a `data_id` that is not in
-`opportunities` for the same `dataset_url`, the child is an **orphan** — bookable availability hanging
-off an event no consumer of the dataset can resolve. A dataset raises an incident when it has at least
-`min_orphans` of them.
+`opportunities` for the same `dataset_url`, **and** the child's own `location` is `null` or `{}`, the
+child is an **orphan** — bookable availability hanging off an event no consumer of the dataset can
+resolve, with nothing on the item itself to fall back on. A dataset raises an incident when it has at
+least `min_orphans` of them (**1000**) *and* they are at least `min_share` of everything it publishes
+(**10%**). On 2026-09-15 that reports 12 datasets out of the 21 with any orphan at all, covering
+764,132 of the estate's 767,209 — the nine it drops account for 3,077 between them.
 
 The rules worth knowing:
 
@@ -533,12 +539,21 @@ The rules worth knowing:
   of the same dataset, so the check only means anything at dataset scope — and a publisher fixes it
   once. `detail.by_kind` splits every count between `Slot` and `ScheduledSession`.
 - **`missing_parent_count` is the figure to act on, not `orphan_count`.** One absent parent can orphan
-  thousands of children. On 2026-09-09 Loughborough University reported 433,014 orphaned Slots arising
+  thousands of children. On 2026-09-15 Loughborough University reported 432,830 orphaned Slots arising
   from just **59** missing `FacilityUse` records — fifty-nine things to fix, not four hundred thousand.
 - **Only a scalar reference can dangle.** A child that inlines its `superEvent` as a JSON object
   carries its parent with it, so it counts in `child_count` but is never examined. This is most of what
   the check excludes, and it is concentrated in `ScheduledSession`: of the ~1.38M published, about 637k
   inline the parent and are never checked.
+- **The child must also publish no location.** `location` has to be SQL `NULL`, a JSON `null`, or the
+  empty object `{}`. A child carrying a real location can still be found, mapped and booked by a
+  consumer who cannot resolve its parent, so it is counted in `child_count` but never in
+  `checked_count` or `orphan_count`. The monitor therefore reports items a consumer genuinely cannot
+  use rather than every dangling reference — on 2026-09-15 this took Loughborough University's checked
+  Slots from 472,676 to 432,830 while removing only 184 orphans, so the two conditions overlap heavily
+  but not entirely.
+- **Both conditions narrow the numerator only.** `child_count` stays every `Slot` and
+  `ScheduledSession` the dataset publishes, so `orphan_share` remains comparable across datasets.
 - **Nothing is filtered by date.** Every child the table holds is counted, however long ago it was
   added: `opportunities` is current state, so anything in it is something a consumer can see today.
   Ageing either side out would report stable datasets as broken — a `FacilityUse` is ingested once and
@@ -546,15 +561,22 @@ The rules worth knowing:
   stall monitor.
 - **A parent published by somebody else still counts as missing.** The check is scoped to one
   `dataset_url`, because a consumer of this dataset cannot resolve anything outside it.
-- **Known gap:** there is no `min_share` knob, so a dataset with three children all orphaned sits in
-  the same list as one with 200,000. Sort or filter on `orphan_share` client-side for now.
+- **Two gates open an incident, and both must be met.** `min_orphans` alone lets a large publisher in
+  on a rounding error of its catalogue; `min_share` alone lets a three-child dataset in on a full
+  house. A dataset has to be broken in absolute terms *and* broken as a proportion of itself. Pass
+  `min_orphans=1&min_share=0` to see everything with a single orphan, which is what this endpoint did
+  before 2026-09-15.
+- **`min_share` is measured against `child_count`**, the same denominator as `orphan_share`, not
+  against `checked_count`. A dataset whose children mostly inline their parent therefore reads lower
+  against the gate than its ratio over the examined set would suggest.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `page` | `1` | One-based page number |
 | `page_size` | `500` | Rows per page, capped at 1000 |
-| `min_orphans` | `1` | Orphaned children that open an incident, counted across both kinds |
-| `past_threshold_orphans` | `100` | Orphaned children that set `past_threshold`; never treated as looser than `min_orphans` |
+| `min_orphans` | `1000` | Orphaned children that open an incident, counted across both kinds |
+| `min_share` | `0.1` | Smallest `orphan_share` that opens an incident. `0` turns the gate off; values outside `0..1` are clamped, so `min_share=5` becomes 1 and leaves only wholly orphaned datasets |
+| `past_threshold_orphans` | `10000` | Orphaned children that set `past_threshold`; never treated as looser than `min_orphans` |
 
 There is **no date parameter at all** — no `as_of`, no lookback. `opportunities` is a current-state
 mirror with no per-day snapshots, so a past date cannot be answered and accepting one would return
@@ -568,22 +590,22 @@ window would usefully exclude.
   "publisher_name": "Loughborough University",
   "dataset_url": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/OpenActive",
   "dataset_name": "Loughborough University Sessions and Facilities",
-  "child_count": 478627,
-  "checked_count": 472876,
-  "orphan_count": 433014,
-  "orphan_share": 0.9047003198733042,
+  "child_count": 478192,
+  "checked_count": 432830,
+  "orphan_count": 432830,
+  "orphan_share": 0.9051385217653161,
   "missing_parent_count": 59,
   "past_threshold": true,
   "status": "open",
   "last_contacted": null,
   "detail": {
     "by_kind": [
-      { "kind": "Slot", "child_count": 472876, "checked_count": 472876, "orphan_count": 433014, "missing_parent_count": 59 },
-      { "kind": "ScheduledSession", "child_count": 5751, "checked_count": 0, "orphan_count": 0, "missing_parent_count": 0 }
+      { "kind": "Slot", "child_count": 472676, "checked_count": 432830, "orphan_count": 432830, "missing_parent_count": 59 },
+      { "kind": "ScheduledSession", "child_count": 5516, "checked_count": 0, "orphan_count": 0, "missing_parent_count": 0 }
     ],
     "missing_parents": [
-      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/664-1", "child_count": 10857 },
-      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/686-1", "child_count": 10857 }
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/664-1", "child_count": 10853 },
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/686-1", "child_count": 10853 }
     ]
   }
 }
@@ -596,14 +618,15 @@ Field notes:
   `publisher_name` (`pub_<slug>`), the same value the feed monitors use for the same publisher.
 - `child_count` counts **every** child of the two kinds the dataset publishes, whatever its age;
   `checked_count` counts only those examined, meaning those that name their parent with a scalar
-  reference. The gap between them is children that inline their `superEvent`. So
+  reference *and* publish no location of their own. The gap between them is children that inline their
+  `superEvent` plus children that carry a location. So
   `orphan_count <= checked_count <= child_count` always.
 - `orphan_share` is `orphan_count / child_count`, so its numerator covers only the children that could
   be checked while its denominator covers all of them. Divide `orphan_count` by `checked_count`
   yourself for the ratio over exactly what was examined; the two diverge for a dataset whose children
-  mostly inline their parent, which is common for `ScheduledSession`.
+  mostly inline their parent, which is common for `ScheduledSession`, or mostly publish a location.
 - `past_threshold` is `true` once `orphan_count` reaches `past_threshold_orphans`, which defaults to
-  **100**. On 2026-09-09 that split 21 open incidents into 16 escalated and 5 not.
+  **10,000**. On 2026-09-15 that split the 12 open incidents into 9 escalated and 3 not.
 - `detail.by_kind` entries sum to the incident's own counts and are ordered worst kind first. A kind
   the dataset does not publish is absent rather than present with zeros.
 - `detail.missing_parents` is a sample of at most **five** missing ids, most children first, merged
@@ -842,8 +865,9 @@ with no `ingestion_date` and so no history of any kind. Consequences:
 - `dataset_url` is the join key to `feeds` (for `publisher_name`) and `feed_quality` (for
   `dataset_name`). On 2026-09-09, 159 of the 160 dataset URLs in `opportunities` matched a `feeds` row;
   the one that does not would report with empty descriptive fields.
-- It is large — a single orphan query scans roughly 2.6 GB — which the daily cache absorbs but which
-  makes `/admin/summary` noticeably slower than it was.
+- It is large — a single orphan query scans roughly 2.8 GB, of which about 100 MB is the `location`
+  column the empty-location test reads — which the daily cache absorbs but which makes
+  `/admin/summary` noticeably slower than it was.
 
 **`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
 2026-08-20 duplicated. Consequences worth remembering when reading the numbers:

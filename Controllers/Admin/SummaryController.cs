@@ -40,7 +40,8 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 	/// <c>dataset_orphaned_children</c> is the exception to all of that. Its <c>count</c> is the total
 	/// number of orphaned children across the estate — a count of broken items, not of datasets — so it
 	/// does <em>not</em> match its incidents endpoint's <c>meta.total</c>, which counts the datasets
-	/// responsible. It reads <c>opportunities</c>, a current-state mirror with no per-day snapshots, so
+	/// responsible. It sums only the datasets that endpoint reports by default, those clearing both
+	/// <c>min_orphans</c> and <c>min_share</c>. It reads <c>opportunities</c>, a current-state mirror with no per-day snapshots, so
 	/// it has no trend endpoint, its <c>sparkline</c> is always empty and its
 	/// <c>past_threshold_count</c> is always <c>0</c> (that threshold applies to datasets, not to this
 	/// total). Its day-on-day change is unknowable rather than zero, so it contributes nothing to the
@@ -265,6 +266,8 @@ public class SummaryController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
 	private async Task<MonitorSummarySnapshot?> OrphanedChildrenSummary()
 	{
 		var counts = await LoadOrphanCounts();
+		// The endpoint's own defaults, so the tile totals exactly the datasets a click through to
+		// /admin/dataset-orphaned-children-incidents shows.
 		var incidents = OrphanedChildrenDetector.Detect(counts, new OrphanedChildrenThresholds());
 
 		var orphans = incidents.Sum(i => i.OrphanCount);
