@@ -26,6 +26,7 @@ http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
 http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToken>
 http://localhost:5268/admin/dataset-future-decline-incidents?token=<AdminToken>
 http://localhost:5268/admin/dataset-future-decline-trend?token=<AdminToken>
+http://localhost:5268/admin/feed-quality?token=<AdminToken>
 ```
 
 ## API reference
@@ -67,6 +68,11 @@ Every admin endpoint returns the same envelope, so the dashboard can paginate an
 
 `/admin/summary` answers with a single object rather than a list, so its `data` is that object and its
 paging fields are fixed at `page: 1, page_size: 1, total: 1`. The `meta` keys are the same either way.
+
+[`/admin/feed-quality`](#get-adminfeed-quality) is the one endpoint with a **third key**, `summary`,
+carrying estate-wide figures next to the rows. `data` and `meta` are unchanged and paging works
+identically; `summary` describes every row the filters matched rather than the page, so it does not
+move as the pages are walked.
 
 ## Caching
 
@@ -830,6 +836,235 @@ The **spine every monitor's incidents share**, and all the dashboard should rely
 `monitor_id`, `publisher_id`, `publisher_name`, `past_threshold`, `status` and `last_contacted`.
 Everything else, including which entity the incident is about, is monitor-specific.
 
+## Data quality
+
+Not a monitor: these endpoints report how good the published data *is*, rather than detecting and
+opening incidents against it. Nothing here has a `monitor_id`, a threshold, a trend endpoint or a tile
+on `/admin/summary`.
+
+### `GET /admin/feed-quality`
+
+Every assessed feed in `feed_quality` with its quality assessment, best-scoring first, and a `summary`
+of the whole set alongside them.
+
+One row per feed. A dataset appears once per feed it publishes, so `dataset_url` and `dataset_name`
+repeat down the page; `summary.total_datasets` is the distinct count.
+
+The rules worth knowing:
+
+- **The response has a third key.** `summary` sits next to `data` and `meta`. It describes every row
+  the filters matched, **not** the page returned, so it can be read once and the rows paged beneath it.
+  It is reduced from those same rows rather than from a second query, so the two cannot disagree.
+- **Counts account for every feed.** A feed whose `status`, `grade`, `feed_type` or `feed_version` is
+  missing is counted as `unknown` rather than dropped, so each breakdown's `feed_count` sums to
+  `summary.total_feeds`. `status` and `grade` are matched case-insensitively.
+- **Averages are unweighted means over the feeds that report the value.** A feed whose completeness is
+  `null` is excluded from both the numerator and the denominator, and every mean carries the
+  `feeds_reporting` it was taken over. Read that first — the denominators differ sharply between
+  properties. A property no feed reports averages to `null`, never to `0`.
+- **`null` is never zero.** Every field but `feed_id` and `dataset_url` is nullable because every
+  column but those two is, and `null` always means the assessment did not report the value. A stored
+  `0` is a real measurement.
+- **The JSON columns are passed through exactly as stored.** `warnings`, `errors` and
+  `missing_required_fields` are the assessor's shape, not this API's. Nothing counts, parses or
+  aggregates them, and no summary figure is derived from them — `summary.feeds_with_errors` counts
+  feeds whose `status` is `ERROR`, which is not the same thing.
+- **Filters combine as they do across the API.** Values within one parameter are OR'd, different
+  parameters are AND'd. `publisher` is resolved through `feeds`, which is where publisher identity
+  lives; `feed_quality` has no publisher column, and a feed whose dataset has no `feeds` row has no
+  publisher and is therefore matched by no `publisher` value.
+
+This is not history-derived, and three things follow. It takes no date parameter of any kind — no
+`as_of`, no lookback — because `feed_quality` holds current state only. There is no sibling trend
+endpoint. And the row carries no `monitor_id`, `first_detected`, `days_open`, `consecutive_days`,
+`past_threshold` or `trend` — those fields are absent rather than null.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `dataset_url` | all | One or more dataset URLs, matched exactly. Repeated (`?dataset_url=a&dataset_url=b`) or comma-separated (`?dataset_url=a,b`) |
+| `publisher` | all | One or more publisher names, matched exactly, resolved through `feeds`. Same two forms |
+
+```json
+{
+  "data": [
+    {
+      "feed_id": "opendata-leisurecloud-live-api-feeds-ActiveLeeds-live-slots",
+      "feed_url": "https://opendata.leisurecloud.live/api/feeds/ActiveLeeds-live-slots",
+      "feed_type": "Slot",
+      "feed_version": "V2.0",
+      "is_regular": true,
+      "dataset_url": "https://activeleeds-oa.leisurecloud.net/OpenActive/",
+      "dataset_name": "Active Leeds Sessions and Facilities",
+      "publisher_id": "pub_active-leeds",
+      "publisher_name": "Active Leeds",
+      "status": "OK",
+      "grade": "Gold",
+      "score": 100,
+      "num_future_opportunity_items": 10493,
+      "completeness": {
+        "location": 100,
+        "start_date": 100,
+        "end_date": 100,
+        "activities": 0,
+        "facilities": 100,
+        "age_range": 0,
+        "level": 0,
+        "accessibility_support": 0,
+        "gender_restriction": 0
+      },
+      "warnings": [],
+      "errors": [],
+      "missing_required_fields": {},
+      "last_assessed": "2026-09-15T01:56:24.156787Z"
+    },
+    {
+      "feed_id": "halo-openactive-legendonlineservices-co-uk-api-facility-uses-events",
+      "feed_url": "https://halo-openactive.legendonlineservices.co.uk/api/facility-uses/events",
+      "feed_type": "Slot",
+      "feed_version": "V2.0",
+      "is_regular": true,
+      "dataset_url": "https://halo-openactive.legendonlineservices.co.uk/OpenActive",
+      "dataset_name": "Halo Sessions and Facilities",
+      "publisher_id": "pub_halo",
+      "publisher_name": "Halo",
+      "status": "ERROR",
+      "grade": null,
+      "score": 100,
+      "num_future_opportunity_items": 63585,
+      "completeness": {
+        "location": 100,
+        "start_date": 100,
+        "end_date": 100,
+        "activities": 100,
+        "facilities": 0,
+        "age_range": 0,
+        "level": 0,
+        "accessibility_support": 0,
+        "gender_restriction": 0
+      },
+      "warnings": ["No future opportunities scheduled"],
+      "errors": ["Data parsing error (invalid JSON or missing 'items')"],
+      "missing_required_fields": { "FacilityUse": ["activity"] },
+      "last_assessed": "2026-09-15T01:56:24.156787Z"
+    }
+  ],
+  "summary": {
+    "total_feeds": 460,
+    "total_datasets": 180,
+    "total_publishers": 179,
+    "regular_feeds": 455,
+    "irregular_feeds": 5,
+    "regularity_unknown": 0,
+    "feeds_ok": 346,
+    "feeds_with_warnings": 37,
+    "feeds_with_errors": 77,
+    "feeds_status_unknown": 0,
+    "datasets_with_errors": 37,
+    "feeds_with_future_data": 242,
+    "datasets_with_future_data": 154,
+    "total_future_opportunity_items": 5322705,
+    "feeds_scored": 258,
+    "average_score": 73.98,
+    "median_score": 92.7,
+    "min_score": 29.2,
+    "max_score": 100,
+    "score_buckets": [
+      { "lower": 0,  "upper": 20,  "feed_count": 0 },
+      { "lower": 20, "upper": 40,  "feed_count": 29 },
+      { "lower": 40, "upper": 60,  "feed_count": 60 },
+      { "lower": 60, "upper": 80,  "feed_count": 32 },
+      { "lower": 80, "upper": 100, "feed_count": 137 }
+    ],
+    "completeness": {
+      "location": { "average": 95.07, "feeds_reporting": 263 },
+      "start_date": { "average": 90.07, "feeds_reporting": 263 },
+      "end_date": { "average": 82.66, "feeds_reporting": 263 },
+      "activities": { "average": 23.79, "feeds_reporting": 263 },
+      "facilities": { "average": 69.89, "feeds_reporting": 263 },
+      "age_range": { "average": 7.23, "feeds_reporting": 263 },
+      "level": { "average": 5.43, "feeds_reporting": 263 },
+      "accessibility_support": { "average": 1.01, "feeds_reporting": 263 },
+      "gender_restriction": { "average": 12.81, "feeds_reporting": 263 }
+    },
+    "status_breakdown": [
+      { "value": "OK", "feed_count": 346, "dataset_count": 158, "share": 0.752 },
+      { "value": "ERROR", "feed_count": 77, "dataset_count": 37, "share": 0.167 },
+      { "value": "WARNING", "feed_count": 37, "dataset_count": 25, "share": 0.08 }
+    ],
+    "grade_breakdown": [
+      { "value": "unknown", "feed_count": 257, "dataset_count": 169, "share": 0.559 },
+      { "value": "Gold", "feed_count": 149, "dataset_count": 124, "share": 0.324 },
+      { "value": "Silver", "feed_count": 40, "dataset_count": 38, "share": 0.087 },
+      { "value": "Bronze", "feed_count": 14, "dataset_count": 11, "share": 0.03 }
+    ],
+    "feed_type_breakdown": [
+      { "value": "FacilityUse", "feed_count": 155, "dataset_count": 154, "share": 0.337 }
+    ],
+    "feed_version_breakdown": [
+      { "value": "V2.0", "feed_count": 258, "dataset_count": 151, "share": 0.561 },
+      { "value": "Unknown", "feed_count": 200, "dataset_count": 145, "share": 0.435 },
+      { "value": "V0.x", "feed_count": 2, "dataset_count": 2, "share": 0.004 }
+    ],
+    "oldest_assessment": "2026-09-15T01:56:24.156787Z",
+    "newest_assessment": "2026-09-15T01:56:24.156787Z"
+  },
+  "meta": {
+    "snapshot_date": "2026-09-15",
+    "generated_at": "2026-09-16T17:33:55Z",
+    "page": 1,
+    "page_size": 500,
+    "total": 460
+  }
+}
+```
+
+Field notes on the rows:
+
+- `publisher_id` is a slug derived from `publisher_name` (`pub_<slug>`), not a stored identifier, and is
+  the same value the monitors report for that publisher. `publisher_name` is `""` when the dataset has
+  no `feeds` row.
+- `dataset_name` is the stored name, falling back to the host of `dataset_url` and then to the URL
+  itself, so it is never empty. `feed_id` and `dataset_url` are the only fields that can never be null.
+- `score` is a normalised 0–100 quality score over required/recommended/optional property presence.
+  `grade` is the coarse banding the column documents as `None`, `Bronze`, `Silver` or `Gold`, though
+  in practice an ungraded feed carries `null` rather than `"None"`. The two are independent: a feed can
+  score 100 and carry no grade, as the second `data` row above does, and on 2026-09-15 most scored
+  feeds were ungraded.
+- `completeness` values are **percentages, 0–100**, not fractions. `0` means no item carries the
+  property; `null` means the assessment did not measure it.
+- `status` is the assessment outcome (`OK`, `WARNING`, `ERROR`), unrelated to the `status: "open"` that
+  every monitor's incidents carry.
+- `is_regular` is `null` when regularity was not determined — not the same as `false`.
+- `last_assessed` is when *this feed* was assessed and may be older than `meta.snapshot_date`.
+- Rows are ordered by `score` descending with unscored feeds last, then by `dataset_url` and `feed_id`.
+  The last two are what make the order total, so paging cannot show one feed twice and another never.
+
+Field notes on the summary:
+
+- `total_publishers` counts distinct non-blank publisher names. Feeds whose dataset has no `feeds` row
+  contribute to none of them, so it can sit below `total_datasets` for reasons other than one publisher
+  owning several datasets.
+- `feeds_with_errors` counts feeds whose **`status`** is `ERROR`; it is not a count of entries in the
+  `errors` column. `datasets_with_errors` is the distinct datasets behind those feeds — the number of
+  publishers worth contacting.
+- `feeds_with_future_data` counts feeds reporting more than zero future items. A feed reporting no
+  figure at all contributes to neither that count nor `total_future_opportunity_items`.
+- `average_score` and the completeness averages are means over the feeds that carry the value, whose
+  counts (`feeds_scored`, `feeds_reporting`) differ from `total_feeds` and from each other. Read
+  `median_score` next to `average_score`: a handful of very poor feeds drag the mean but not the median.
+- `score_buckets` is always five buckets of twenty in ascending order, so the histogram keeps its shape
+  whatever the data. `lower` is inclusive and `upper` exclusive, except the top bucket which includes
+  100. Counts sum to `feeds_scored`, so unscored feeds are in no bucket.
+- Every breakdown is ordered by `feed_count` descending, then `value` ascending. `dataset_count` is the
+  distinct datasets with at least one feed of that value, so those sum above `total_datasets` wherever a
+  dataset's feeds differ. Values differing only in case are one group, labelled with whichever the
+  ordering reaches first — which is why a stored `"Unknown"` feed version and a missing one are counted
+  together.
+- `oldest_assessment` and `newest_assessment` bracket the `last_assessed` timestamps. They are equal
+  whenever the assessor last ran over the whole table at once, which is the normal case.
+
 ## Source data
 
 The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
@@ -868,6 +1103,24 @@ with no `ingestion_date` and so no history of any kind. Consequences:
 - It is large — a single orphan query scans roughly 2.8 GB, of which about 100 MB is the `location`
   column the empty-location test reads — which the daily cache absorbs but which makes
   `/admin/summary` noticeably slower than it was.
+
+`feed_quality` is the third current-state table, and the shape `/admin/feed-quality` is built around:
+one row per feed, overwritten by the assessment pipeline, with `last_assessed` its only temporal
+column and no history of any kind. Consequences:
+
+- It **can** date itself, unlike `opportunities`, so `/admin/feed-quality` takes its
+  `meta.snapshot_date` from `MAX(DATE(last_assessed))` rather than from `opportunity_ingestion`. That
+  is the one place on this surface where `snapshot_date` does not come from the ingestion run, and
+  deliberately so: the assessments are written by their own pipeline, and dating them from the
+  ingestion day would label them with a day the assessor may not have run.
+- No trend endpoint, no `as_of`, no date window.
+- It has no publisher column. `publisher_name` is joined from `feeds` on `dataset_url`, which holds one
+  row per feed and so is collapsed to one row per dataset before the join — joining it raw would fan a
+  dataset's assessments out by its feed count.
+- It is small — one row per feed, 460 of them on 2026-09-15 — which is why `/admin/feed-quality` loads
+  the whole filtered set and reduces the summary from it in C# rather than running a second aggregate
+  query. Every other monitor aggregates in SQL because its source table is orders of magnitude larger.
+- The completeness columns are stored as **percentages, 0–100**, not fractions.
 
 **`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
 2026-08-20 duplicated. Consequences worth remembering when reading the numbers:
@@ -908,13 +1161,16 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~DatasetFutureDeclineDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~FeedQualitySummariserTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~AdminSlugTests"
 ```
 
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
 `Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs`,
 `Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, and the
-summary arithmetic in `Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and
+summary arithmetic in `Services/Admin/MonitorSummaries.cs` and
+`Services/Admin/FeedQualityMonitor.cs`, all deliberately free of BigQuery and
 ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live

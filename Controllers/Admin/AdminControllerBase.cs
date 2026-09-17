@@ -122,6 +122,64 @@ public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOpti
 	}
 
 	/// <summary>
+	/// Applies the same paging as <see cref="Paginate{T}"/> and carries an aggregate alongside the page.
+	/// For endpoints that answer with rows <em>and</em> figures describing all of them.
+	/// </summary>
+	/// <param name="rows">The whole, already-ordered result set — not the page.</param>
+	/// <param name="summary">
+	/// The aggregate for <paramref name="rows"/> in full. Computed by the caller from the same list, so
+	/// the figures always describe the rows being paged rather than a separately queried population.
+	/// </param>
+	/// <param name="page">Requested one-based page; clamped to at least one.</param>
+	/// <param name="pageSize">Requested page size; clamped to <c>1</c>..<see cref="MaxPageSize"/>.</param>
+	/// <param name="snapshotDate">The day the figures describe.</param>
+	protected static AdminSummarisedPage<TRow, TSummary> PaginateWithSummary<TRow, TSummary>(
+		IReadOnlyList<TRow> rows,
+		TSummary summary,
+		int page,
+		int pageSize,
+		DateOnly snapshotDate)
+	{
+		page = Math.Max(1, page);
+		pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+
+		return new AdminSummarisedPage<TRow, TSummary>
+		{
+			Data = rows.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+			Summary = summary,
+			Meta = Meta(snapshotDate, generatedAt: null, page, pageSize, total: rows.Count),
+		};
+	}
+
+	/// <summary>
+	/// Flattens a repeated query parameter into the distinct values it carries, accepting both
+	/// <c>?a=x&amp;a=y</c> and <c>?a=x,y</c>. Blank entries are dropped.
+	/// </summary>
+	/// <remarks>
+	/// The same shape the analytics surface offers, so a dashboard developer who has used one filter has
+	/// used them all. Deliberately a copy rather than a reference to <c>ApiController</c>'s private
+	/// helper: the two surfaces share nothing but options and table names, and a shared utility class
+	/// for four lines would be the first thread tying them together.
+	///
+	/// <c>protected static</c> and not <c>public</c>: a public method on a controller with no route
+	/// template of its own is routed as an action, and would collide with everything else on the
+	/// controller's path.
+	/// </remarks>
+	protected static List<string> NormaliseMultiValue(string[]? values)
+	{
+		if (values is null || values.Length == 0)
+		{
+			return [];
+		}
+
+		return values
+			.SelectMany(v => v?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [])
+			.Where(v => !string.IsNullOrWhiteSpace(v))
+			.Distinct(StringComparer.Ordinal)
+			.ToList();
+	}
+
+	/// <summary>
 	/// Wraps a single object in the same envelope, with the paging fields fixed at one row on one page.
 	/// For endpoints whose answer is one document rather than a list.
 	/// </summary>

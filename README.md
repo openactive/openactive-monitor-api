@@ -29,6 +29,7 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/dataset-orphaned-children-incidents`: datasets publishing Slots or ScheduledSessions whose parent event is missing from the same dataset
 - `GET /admin/dataset-future-decline-incidents`: datasets whose future opportunity supply is draining while their feeds keep ingesting successfully
 - `GET /admin/dataset-future-decline-trend`: daily open/past-threshold future-supply decline counts
+- `GET /admin/feed-quality`: every assessed feed's quality row from `feed_quality`, plus an estate-wide quality summary (optional dataset_url/publisher filters)
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.
