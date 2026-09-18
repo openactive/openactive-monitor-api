@@ -89,7 +89,7 @@ The `activity` filter accepts either a single value (`?activity=Yoga`) or multip
 
 `/activities` returns every distinct activity/facility value (flattened from the `activity_or_facility` JSON array) in alphabetical order, accepting the same optional `district`, `region`, and `country` filters.
 
-`/summary` returns aggregate metrics. Every endpoint on this controller is cached for four hours, varying by all query parameters; the `/admin` endpoints are cached for fifteen minutes.
+`/summary` returns aggregate metrics. Every endpoint on this controller is cached for four hours, varying by all query parameters; the `/admin` endpoints are cached until 07:00 UTC daily, when the ingestion pipeline has refreshed.
 
 `/areas` returns the location hierarchy (country → regions → districts), keyed by name. Districts with a null region are listed directly on the country under a `districts` key:
 

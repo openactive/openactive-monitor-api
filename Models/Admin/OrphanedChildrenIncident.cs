@@ -55,32 +55,37 @@ public sealed class OrphanedChildrenIncident
 	public required long ChildCount { get; init; }
 
 	/// <summary>
-	/// Children actually examined: those naming their parent with a scalar reference. Always between
+	/// Children actually examined: those naming their parent with a scalar reference <em>and</em>
+	/// publishing no location of their own (<c>null</c> or <c>{}</c>). Always between
 	/// <see cref="OrphanCount"/> and <see cref="ChildCount"/>. The shortfall against
 	/// <see cref="ChildCount"/> is children that inline their <c>superEvent</c> as an object and so
-	/// carry their parent with them.
+	/// carry their parent with them, plus children that carry a location and so remain placeable
+	/// whether or not their parent resolves.
 	/// </summary>
 	public required long CheckedCount { get; init; }
 
-	/// <summary>Examined children whose referenced parent is missing from the dataset.</summary>
+	/// <summary>
+	/// Examined children whose referenced parent is missing from the dataset: a dangling reference with
+	/// no location on the child to fall back on.
+	/// </summary>
 	public required long OrphanCount { get; init; }
 
 	/// <summary>
 	/// <see cref="OrphanCount"/> over <see cref="ChildCount"/>, between <c>0</c> and <c>1</c>.
 	/// </summary>
 	/// <remarks>
-	/// The numerator counts only the children that could be checked — those naming a parent — while the
-	/// denominator counts every child of those kinds. Divide <see cref="OrphanCount"/> by
-	/// <see cref="CheckedCount"/> instead for the ratio over exactly what was examined; the two differ
-	/// for a dataset whose children mostly inline their parent, which is common for
-	/// <c>ScheduledSession</c>.
+	/// The numerator counts only the children that could be checked — those naming a parent and carrying
+	/// no location of their own — while the denominator counts every child of those kinds. Divide
+	/// <see cref="OrphanCount"/> by <see cref="CheckedCount"/> instead for the ratio over exactly what
+	/// was examined; the two differ for a dataset whose children mostly inline their parent, which is
+	/// common for <c>ScheduledSession</c>, or mostly publish their own location.
 	/// </remarks>
 	public required double OrphanShare { get; init; }
 
 	/// <summary>
 	/// Distinct parent ids that could not be found — <b>the actionable figure</b>. One absent
 	/// <c>SessionSeries</c> or <c>FacilityUse</c> can orphan thousands of children, so an
-	/// <see cref="OrphanCount"/> of 433,014 against a <see cref="MissingParentCount"/> of 59 is
+	/// <see cref="OrphanCount"/> of 432,830 against a <see cref="MissingParentCount"/> of 59 is
 	/// fifty-nine things to fix, not four hundred thousand.
 	/// </summary>
 	public required long MissingParentCount { get; init; }
@@ -122,8 +127,8 @@ public sealed class OrphanedChildrenIncidentDetail
 /// <remarks>
 /// A <c>Slot</c> references its <c>FacilityUse</c>; a <c>ScheduledSession</c> references its
 /// <c>SessionSeries</c>. A child that inlines its <c>superEvent</c> as a JSON object rather than
-/// naming it cannot dangle, so it counts in <see cref="ChildCount"/> but never in
-/// <see cref="CheckedCount"/>.
+/// naming it cannot dangle, and a child with a location of its own stays placeable without its parent;
+/// both count in <see cref="ChildCount"/> but never in <see cref="CheckedCount"/>.
 /// </remarks>
 public sealed class OrphanedChildrenKindCounts
 {
@@ -145,6 +150,9 @@ public sealed class OrphanedChildrenMissingParent
 	/// <summary>The <c>data_id</c> named by <c>has_superEvent</c> that is not in the dataset.</summary>
 	public required string MissingId { get; init; }
 
-	/// <summary>Children pointing at it — how much repairing this one parent would fix.</summary>
+	/// <summary>
+	/// Orphaned children pointing at it — how much repairing this one parent would fix. Children that
+	/// name it but publish their own location are not counted: they are not orphaned.
+	/// </summary>
 	public required long ChildCount { get; init; }
 }

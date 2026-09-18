@@ -23,6 +23,31 @@ public sealed class AdminDocument<T>
 	public required AdminPageMeta Meta { get; init; }
 }
 
+/// <summary>
+/// Envelope for an admin endpoint that answers with a page of rows <em>and</em> an aggregate describing
+/// the whole result set behind them. <c>data</c> and <c>meta</c> are exactly what
+/// <see cref="AdminPage{T}"/> carries; <c>summary</c> is the extra key.
+/// </summary>
+/// <remarks>
+/// The only departure from the two-key envelope, and a deliberate one: a dashboard showing estate-wide
+/// figures above a table of rows would otherwise have to call twice and hope the two answers were
+/// computed from the same data. The summary is reduced from the very rows being paged through, so the
+/// two can never disagree.
+///
+/// <c>summary</c> describes every row the request's filters matched, <b>not</b> the page returned, so
+/// it does not change as the caller walks the pages.
+/// </remarks>
+/// <typeparam name="TRow">The row type, as in <see cref="AdminPage{T}"/>.</typeparam>
+/// <typeparam name="TSummary">The aggregate describing the whole filtered result set.</typeparam>
+public sealed class AdminSummarisedPage<TRow, TSummary>
+{
+	public required IReadOnlyList<TRow> Data { get; init; }
+
+	public required TSummary Summary { get; init; }
+
+	public required AdminPageMeta Meta { get; init; }
+}
+
 /// <summary>Metadata describing which page was returned and how fresh the underlying data is.</summary>
 public sealed class AdminPageMeta
 {

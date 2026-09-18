@@ -73,7 +73,9 @@ public sealed class MonitorSummary
 	/// <c>dataset_orphaned_children</c> is the exception: its <c>count</c> is the total number of
 	/// orphaned children across the estate rather than a count of incidents, because one dataset can
 	/// account for hundreds of thousands of them. Read its incidents endpoint's <c>meta.total</c> for
-	/// the number of datasets involved.
+	/// the number of datasets involved. It sums the same datasets that endpoint reports by default —
+	/// those clearing both <c>min_orphans</c> and <c>min_share</c> — so the two never disagree about
+	/// which datasets count.
 	/// </remarks>
 	public required int Count { get; init; }
 

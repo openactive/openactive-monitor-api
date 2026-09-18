@@ -27,8 +27,9 @@ public class DatasetIntegrityController(IOptions<BigQueryOptions> bigQueryOption
 	/// </summary>
 	/// <remarks>
 	/// Datasets publishing children whose <c>has_superEvent</c> names a parent that is not in
-	/// <c>opportunities</c> for the same <c>dataset_url</c> — bookable availability hanging off an event
-	/// nobody consuming the dataset can resolve. Ordered worst first.
+	/// <c>opportunities</c> for the same <c>dataset_url</c>, <em>and</em> which carry no location of
+	/// their own — bookable availability hanging off an event nobody consuming the dataset can resolve,
+	/// with nothing on the child to fall back on. Ordered worst first.
 	///
 	/// Two child kinds are checked: a <c>Slot</c>, which references its <c>FacilityUse</c>, and a
 	/// <c>ScheduledSession</c>, which references its <c>SessionSeries</c>. <c>detail.by_kind</c> splits
@@ -45,6 +46,20 @@ public class DatasetIntegrityController(IOptions<BigQueryOptions> bigQueryOption
 	/// - **Only a scalar reference can dangle.** A child that inlines its <c>superEvent</c> as a JSON
 	///   object is counted in <c>child_count</c> but never examined — it carries its parent with it.
 	///   This is most of what is excluded, particularly for <c>ScheduledSession</c>.
+	/// - **The child must also have no location of its own.** <c>location</c> must be <c>NULL</c>, a
+	///   JSON <c>null</c>, or the empty object <c>{}</c>. A child that publishes a real location is
+	///   still placeable, mappable and bookable by a consumer who cannot resolve its parent, so it is
+	///   counted in <c>child_count</c> but not in <c>checked_count</c> or <c>orphan_count</c>. The
+	///   effect is that <c>orphan_count</c> reports items a consumer genuinely cannot use, not every
+	///   dangling reference.
+	/// - **`orphan_share` keeps the full denominator.** Both extra conditions narrow the numerator
+	///   only; <c>child_count</c> is still every <c>Slot</c> and <c>ScheduledSession</c> the dataset
+	///   publishes, so shares stay comparable between datasets.
+	/// - **Two gates open an incident, and both must be met.** A dataset is reported only when it has at
+	///   least <c>min_orphans</c> orphans (default <c>1000</c>) <em>and</em> an <c>orphan_share</c> of at
+	///   least <c>min_share</c> (default <c>0.1</c>, a tenth of everything it publishes). Absolute count
+	///   alone lets a large publisher in on a rounding error of its catalogue; share alone lets a
+	///   three-child dataset in on a full house. Lower either parameter to see the smaller cases.
 	/// - **Nothing is filtered by date.** Every child the table holds is counted, however long ago it
 	///   was added: <c>opportunities</c> is current state, so anything in it is something a consumer can
 	///   see today. Ageing children or parents out would report stable datasets as broken, since a
@@ -67,17 +82,19 @@ public class DatasetIntegrityController(IOptions<BigQueryOptions> bigQueryOption
 	/// </remarks>
 	/// <param name="page">One-based page number. Default <c>1</c>.</param>
 	/// <param name="page_size">Rows per page. Default <c>500</c>, capped at <c>1000</c>.</param>
-	/// <param name="min_orphans">Orphaned children that open an incident, counted across both kinds. Default <c>1</c> — a single orphan is enough.</param>
-	/// <param name="past_threshold_orphans">Orphaned children that set <c>past_threshold</c>. Default <c>100</c>; never treated as looser than <c>min_orphans</c>.</param>
+	/// <param name="min_orphans">Orphaned children that open an incident, counted across both kinds. Default <c>1000</c>. Pass <c>1</c> to see every dataset with a single orphan.</param>
+	/// <param name="min_share">Smallest <c>orphan_share</c> that opens an incident, as a fraction of <c>child_count</c>. Default <c>0.1</c> (10%). Pass <c>0</c> to disable the gate. Values outside <c>0..1</c> are clamped.</param>
+	/// <param name="past_threshold_orphans">Orphaned children that set <c>past_threshold</c>. Default <c>10000</c>; never treated as looser than <c>min_orphans</c>.</param>
 	[HttpGet("dataset-orphaned-children-incidents")]
 	[ProducesResponseType(typeof(AdminPage<OrphanedChildrenIncident>), StatusCodes.Status200OK)]
 	public async Task<ActionResult<AdminPage<OrphanedChildrenIncident>>> DatasetOrphanedChildrenIncidents(
 		int page = 1,
 		int page_size = DefaultPageSize,
-		int min_orphans = 1,
-		int past_threshold_orphans = 100)
+		int min_orphans = 1_000,
+		double min_share = 0.10,
+		int past_threshold_orphans = 10_000)
 	{
-		var thresholds = BuildThresholds(min_orphans, past_threshold_orphans);
+		var thresholds = BuildThresholds(min_orphans, min_share, past_threshold_orphans);
 
 		var snapshotDate = await ResolveSnapshotDate(asOf: null);
 		if (snapshotDate is null)
@@ -99,12 +116,15 @@ public class DatasetIntegrityController(IOptions<BigQueryOptions> bigQueryOption
 
 	#region Utilities
 
-	private static OrphanedChildrenThresholds BuildThresholds(int minOrphans, int pastThresholdOrphans) =>
+	private static OrphanedChildrenThresholds BuildThresholds(int minOrphans, double minShare, int pastThresholdOrphans) =>
 		new()
 		{
 			// Floor of one: a dataset with no orphans is not an incident. The ceiling is comfortably
 			// above any single dataset and keeps the knob away from overflow.
 			MinOrphans = Math.Clamp(minOrphans, 1, 1_000_000),
+			// A share is a fraction, so anything outside 0..1 is caller error: 0 turns the gate off,
+			// above 1 would admit nothing at all. NaN, which no clamp catches, falls back to 0.
+			MinShare = double.IsNaN(minShare) ? 0 : Math.Clamp(minShare, 0, 1),
 			PastThresholdOrphans = Math.Clamp(pastThresholdOrphans, 1, 1_000_000),
 		};
 

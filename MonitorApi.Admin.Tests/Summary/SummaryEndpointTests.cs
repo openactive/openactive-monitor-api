@@ -163,10 +163,17 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 		var stalls = await GetAdmin<AdminPage<StallTrendPoint>>("/admin/single-feed-stall-trend?trend_days=7");
 		var datasetStalls = await GetAdmin<AdminPage<DatasetStallTrendPoint>>("/admin/dataset-stall-trend?trend_days=7");
 		var errors = await GetAdmin<AdminPage<IngestionErrorTrendPoint>>("/admin/feed-ingestion-error-trend?trend_days=7");
+		var declines = await GetAdmin<AdminPage<DatasetFutureDeclineTrendPoint>>("/admin/dataset-future-decline-trend?trend_days=7");
 
-		// The headline figures sum every monitor the summary reports, so all three trends are in play.
+		// The headline figures sum every monitor the summary reports, so all four trends are in play.
 		Assert.Equal(
-			["dataset_orphaned_children", "dataset_stall", "feed_ingestion_error", "single_feed_stall"],
+			[
+				"dataset_future_decline",
+				"dataset_orphaned_children",
+				"dataset_stall",
+				"feed_ingestion_error",
+				"single_feed_stall",
+			],
 			summary.Monitors.Select(m => m.MonitorId).Order());
 
 		// dataset_orphaned_children is deliberately absent from the sums that follow. It reads a
@@ -176,11 +183,13 @@ public class SummaryEndpointTests(AdminApiFixture fixture) : IClassFixture<Admin
 		var expectedOpenDelta =
 			(stalls.Data[^1].OpenCount - stalls.Data[^2].OpenCount) +
 			(datasetStalls.Data[^1].OpenCount - datasetStalls.Data[^2].OpenCount) +
-			(errors.Data[^1].OpenCount - errors.Data[^2].OpenCount);
+			(errors.Data[^1].OpenCount - errors.Data[^2].OpenCount) +
+			(declines.Data[^1].OpenCount - declines.Data[^2].OpenCount);
 		var expectedPastThresholdDelta =
 			(stalls.Data[^1].PastThresholdCount - stalls.Data[^2].PastThresholdCount) +
 			(datasetStalls.Data[^1].PastThresholdCount - datasetStalls.Data[^2].PastThresholdCount) +
-			(errors.Data[^1].PastThresholdCount - errors.Data[^2].PastThresholdCount);
+			(errors.Data[^1].PastThresholdCount - errors.Data[^2].PastThresholdCount) +
+			(declines.Data[^1].PastThresholdCount - declines.Data[^2].PastThresholdCount);
 
 		Assert.Equal(expectedOpenDelta, summary.PublishersWithIssuesDelta);
 		Assert.Equal(expectedPastThresholdDelta, summary.PastThresholdDelta);

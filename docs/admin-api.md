@@ -24,6 +24,11 @@ http://localhost:5268/admin/dataset-stall-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-incidents?token=<AdminToken>
 http://localhost:5268/admin/feed-ingestion-error-trend?token=<AdminToken>
 http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToken>
+http://localhost:5268/admin/dataset-future-decline-incidents?token=<AdminToken>
+http://localhost:5268/admin/dataset-future-decline-trend?token=<AdminToken>
+http://localhost:5268/admin/feed-quality?token=<AdminToken>
+http://localhost:5268/admin/active-places-site-mappings?token=<AdminToken>
+http://localhost:5268/admin/active-places-coverage?token=<AdminToken>
 ```
 
 ## API reference
@@ -65,6 +70,11 @@ Every admin endpoint returns the same envelope, so the dashboard can paginate an
 
 `/admin/summary` answers with a single object rather than a list, so its `data` is that object and its
 paging fields are fixed at `page: 1, page_size: 1, total: 1`. The `meta` keys are the same either way.
+
+[`/admin/feed-quality`](#get-adminfeed-quality) is the one endpoint with a **third key**, `summary`,
+carrying estate-wide figures next to the rows. `data` and `meta` are unchanged and paging works
+identically; `summary` describes every row the filters matched rather than the page, so it does not
+move as the pages are walked.
 
 ## Caching
 
@@ -113,6 +123,12 @@ unhealthy, and one line per monitor. Takes no parameters.
         "sparkline": [1, 2, 1, 1, 6, 1, 6]
       },
       {
+        "monitor_id": "dataset_future_decline",
+        "count": 7,
+        "past_threshold_count": 2,
+        "sparkline": [9, 11, 8, 10, 8, 9, 7]
+      },
+      {
         "monitor_id": "dataset_orphaned_children",
         "count": 582352,
         "past_threshold_count": 0,
@@ -148,7 +164,9 @@ Field notes:
   only when less history exists, and is never padded.
   - `dataset_orphaned_children` is the exception to all of this. Its `count` is the **total number of
     orphaned children across the estate** — a count of broken items, not of datasets — so it does
-    *not* equal its incidents endpoint's `meta.total`, which counts the datasets responsible. The
+    *not* equal its incidents endpoint's `meta.total`, which counts the datasets responsible. It sums
+    only the datasets that clear that endpoint's default gates (`min_orphans` and `min_share`), so the
+    two stay consistent: 764,132 orphans across 12 datasets on 2026-09-15. The
     headline is the size of the defect, because a single dataset routinely accounts for hundreds of
     thousands of orphans. It reads `opportunities`, which holds no history, so it has no trend
     endpoint, its `sparkline` is always **empty**, and its `past_threshold_count` is always `0` (that
@@ -511,13 +529,17 @@ Two things to expect in the series:
 
 ### `GET /admin/dataset-orphaned-children-incidents`
 
-Datasets publishing children whose parent event is missing from the same dataset, ordered worst first.
+Datasets publishing children that are unplaceable: their parent event is missing from the same dataset
+*and* they carry no location of their own. Ordered worst first.
 
 An OpenActive child names its parent through `has_superEvent`: a `Slot` names its `FacilityUse`, a
 `ScheduledSession` names its `SessionSeries`. When that reference points at a `data_id` that is not in
-`opportunities` for the same `dataset_url`, the child is an **orphan** — bookable availability hanging
-off an event no consumer of the dataset can resolve. A dataset raises an incident when it has at least
-`min_orphans` of them.
+`opportunities` for the same `dataset_url`, **and** the child's own `location` is `null` or `{}`, the
+child is an **orphan** — bookable availability hanging off an event no consumer of the dataset can
+resolve, with nothing on the item itself to fall back on. A dataset raises an incident when it has at
+least `min_orphans` of them (**1000**) *and* they are at least `min_share` of everything it publishes
+(**10%**). On 2026-09-15 that reports 12 datasets out of the 21 with any orphan at all, covering
+764,132 of the estate's 767,209 — the nine it drops account for 3,077 between them.
 
 The rules worth knowing:
 
@@ -525,12 +547,21 @@ The rules worth knowing:
   of the same dataset, so the check only means anything at dataset scope — and a publisher fixes it
   once. `detail.by_kind` splits every count between `Slot` and `ScheduledSession`.
 - **`missing_parent_count` is the figure to act on, not `orphan_count`.** One absent parent can orphan
-  thousands of children. On 2026-09-09 Loughborough University reported 433,014 orphaned Slots arising
+  thousands of children. On 2026-09-15 Loughborough University reported 432,830 orphaned Slots arising
   from just **59** missing `FacilityUse` records — fifty-nine things to fix, not four hundred thousand.
 - **Only a scalar reference can dangle.** A child that inlines its `superEvent` as a JSON object
   carries its parent with it, so it counts in `child_count` but is never examined. This is most of what
   the check excludes, and it is concentrated in `ScheduledSession`: of the ~1.38M published, about 637k
   inline the parent and are never checked.
+- **The child must also publish no location.** `location` has to be SQL `NULL`, a JSON `null`, or the
+  empty object `{}`. A child carrying a real location can still be found, mapped and booked by a
+  consumer who cannot resolve its parent, so it is counted in `child_count` but never in
+  `checked_count` or `orphan_count`. The monitor therefore reports items a consumer genuinely cannot
+  use rather than every dangling reference — on 2026-09-15 this took Loughborough University's checked
+  Slots from 472,676 to 432,830 while removing only 184 orphans, so the two conditions overlap heavily
+  but not entirely.
+- **Both conditions narrow the numerator only.** `child_count` stays every `Slot` and
+  `ScheduledSession` the dataset publishes, so `orphan_share` remains comparable across datasets.
 - **Nothing is filtered by date.** Every child the table holds is counted, however long ago it was
   added: `opportunities` is current state, so anything in it is something a consumer can see today.
   Ageing either side out would report stable datasets as broken — a `FacilityUse` is ingested once and
@@ -538,15 +569,22 @@ The rules worth knowing:
   stall monitor.
 - **A parent published by somebody else still counts as missing.** The check is scoped to one
   `dataset_url`, because a consumer of this dataset cannot resolve anything outside it.
-- **Known gap:** there is no `min_share` knob, so a dataset with three children all orphaned sits in
-  the same list as one with 200,000. Sort or filter on `orphan_share` client-side for now.
+- **Two gates open an incident, and both must be met.** `min_orphans` alone lets a large publisher in
+  on a rounding error of its catalogue; `min_share` alone lets a three-child dataset in on a full
+  house. A dataset has to be broken in absolute terms *and* broken as a proportion of itself. Pass
+  `min_orphans=1&min_share=0` to see everything with a single orphan, which is what this endpoint did
+  before 2026-09-15.
+- **`min_share` is measured against `child_count`**, the same denominator as `orphan_share`, not
+  against `checked_count`. A dataset whose children mostly inline their parent therefore reads lower
+  against the gate than its ratio over the examined set would suggest.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `page` | `1` | One-based page number |
 | `page_size` | `500` | Rows per page, capped at 1000 |
-| `min_orphans` | `1` | Orphaned children that open an incident, counted across both kinds |
-| `past_threshold_orphans` | `100` | Orphaned children that set `past_threshold`; never treated as looser than `min_orphans` |
+| `min_orphans` | `1000` | Orphaned children that open an incident, counted across both kinds |
+| `min_share` | `0.1` | Smallest `orphan_share` that opens an incident. `0` turns the gate off; values outside `0..1` are clamped, so `min_share=5` becomes 1 and leaves only wholly orphaned datasets |
+| `past_threshold_orphans` | `10000` | Orphaned children that set `past_threshold`; never treated as looser than `min_orphans` |
 
 There is **no date parameter at all** — no `as_of`, no lookback. `opportunities` is a current-state
 mirror with no per-day snapshots, so a past date cannot be answered and accepting one would return
@@ -560,22 +598,22 @@ window would usefully exclude.
   "publisher_name": "Loughborough University",
   "dataset_url": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/OpenActive",
   "dataset_name": "Loughborough University Sessions and Facilities",
-  "child_count": 478627,
-  "checked_count": 472876,
-  "orphan_count": 433014,
-  "orphan_share": 0.9047003198733042,
+  "child_count": 478192,
+  "checked_count": 432830,
+  "orphan_count": 432830,
+  "orphan_share": 0.9051385217653161,
   "missing_parent_count": 59,
   "past_threshold": true,
   "status": "open",
   "last_contacted": null,
   "detail": {
     "by_kind": [
-      { "kind": "Slot", "child_count": 472876, "checked_count": 472876, "orphan_count": 433014, "missing_parent_count": 59 },
-      { "kind": "ScheduledSession", "child_count": 5751, "checked_count": 0, "orphan_count": 0, "missing_parent_count": 0 }
+      { "kind": "Slot", "child_count": 472676, "checked_count": 432830, "orphan_count": 432830, "missing_parent_count": 59 },
+      { "kind": "ScheduledSession", "child_count": 5516, "checked_count": 0, "orphan_count": 0, "missing_parent_count": 0 }
     ],
     "missing_parents": [
-      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/664-1", "child_count": 10857 },
-      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/686-1", "child_count": 10857 }
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/664-1", "child_count": 10853 },
+      { "missing_id": "https://loughboroughuniversity-openactive.legendonlineservices.co.uk/api/facility-uses/686-1", "child_count": 10853 }
     ]
   }
 }
@@ -588,14 +626,15 @@ Field notes:
   `publisher_name` (`pub_<slug>`), the same value the feed monitors use for the same publisher.
 - `child_count` counts **every** child of the two kinds the dataset publishes, whatever its age;
   `checked_count` counts only those examined, meaning those that name their parent with a scalar
-  reference. The gap between them is children that inline their `superEvent`. So
+  reference *and* publish no location of their own. The gap between them is children that inline their
+  `superEvent` plus children that carry a location. So
   `orphan_count <= checked_count <= child_count` always.
 - `orphan_share` is `orphan_count / child_count`, so its numerator covers only the children that could
   be checked while its denominator covers all of them. Divide `orphan_count` by `checked_count`
   yourself for the ratio over exactly what was examined; the two diverge for a dataset whose children
-  mostly inline their parent, which is common for `ScheduledSession`.
+  mostly inline their parent, which is common for `ScheduledSession`, or mostly publish a location.
 - `past_threshold` is `true` once `orphan_count` reaches `past_threshold_orphans`, which defaults to
-  **100**. On 2026-09-09 that split 21 open incidents into 16 escalated and 5 not.
+  **10,000**. On 2026-09-15 that split the 12 open incidents into 9 escalated and 3 not.
 - `detail.by_kind` entries sum to the incident's own counts and are ordered worst kind first. A kind
   the dataset does not publish is absent rather than present with zeros.
 - `detail.missing_parents` is a sample of at most **five** missing ids, most children first, merged
@@ -613,19 +652,708 @@ Field notes:
   the null.
 - `quality_score` — `feed_quality.score` is per-feed and there is no dataset-level equivalent.
 
+### `GET /admin/dataset-future-decline-incidents`
+
+Datasets whose forward supply is draining, ordered by the largest loss first. The signal is
+`total_future_opportunities` — how much a publisher still has on offer — so an incident here means
+consumers are running out of things to book, whether or not anything looks broken. It is the gap the
+other four monitors leave between them: these feeds are ingesting successfully every day and simply
+have less to give each time.
+
+A feed raises an incident when it completed at least three runs inside the last `window_days` days,
+carried at least `min_future_opportunities` at the first of them, **and** then either fell at *every*
+observation in the window, however gently, **or** lost at least `drop_percent` of its supply between two
+consecutive observations. The two rules are independent and either is enough.
+
+It is then **reported** only if it also clears a qualifying gate over the longer `qualify_window_days`
+window: either it has lost at least `qualify_drop_percent` of its supply across that window, **or** its
+`updated − actual_deletes` across the detection window is negative. Detection is deliberately sensitive
+and finds plenty of wobble; the gate is what separates a slide worth an operator's morning from noise.
+On 2026-09-15 it took the list from 11 datasets to 7.
+
+The rules worth knowing:
+
+- **Only `COMPLETE` ingestion runs are read.** A feed that failed or was not polled has no observation
+  that day at all. That is what keeps a publisher's outage — already reported by the stall and
+  ingestion-error monitors — from being turned into a second, duplicate incident with a bogus fall to
+  zero.
+- **Comparisons are between consecutive observations, not consecutive calendar days.** A missing day
+  neither breaks a run of falls nor invents a drop across the gap it leaves.
+- **The gate's two clauses catch different things.** A steep slide qualifies on the drop however
+  healthily the feed publishes. A shallow one qualifies only if the feed is removing more than it adds,
+  which is what tells erosion apart from a publisher whose catalogue is simply smaller this week. Only
+  the second clause reads `updated` and `actual_deletes`; neither *raises* an incident, and the rules
+  that do read supply alone.
+- **The drop clause looks back further than detection does.** A slide that has been running for a
+  fortnight reads as trivial through a five-day slot — `qualify_drop_percent` is measured over
+  `qualify_window_days`, so the ten-day figure is the one that decides. The delta, by contrast, is
+  summed over the five-day detection window only: deletions older than that do not resurrect a feed.
+- **`qualify_window_days` is never treated as shorter than `window_days`**, so the days it judges are
+  always a superset of the days the decline was found in.
+- **`Slot` feeds are excluded entirely.** A slot count says how far ahead a publisher has opened
+  bookings, not how much it has to offer, so it falls every time that rolling window shortens — a
+  decline that means nothing. Session, session-series and facility-use feeds carry the real signal. The
+  list lives on `DatasetSupplyController.IgnoredKinds` and is shared with the `/admin/summary` tile so
+  the two cannot disagree.
+- **The monotonic rule exists because a percentage threshold cannot see erosion.** A feed shedding two
+  percent a day loses a tenth of its supply a week and never trips a single-step threshold; one that
+  halves overnight and then holds never trips a cumulative one. `detail.reason` says which fired, and is
+  `both` where the dataset's feeds between them did each.
+- **The dataset is the incident and `detail.feeds` names the feeds responsible.** Its totals cover only
+  those feeds, never the dataset's healthy ones, so `drop` and `drop_percent` always describe the same
+  thing. A dataset's healthy feed is simply not in the list.
+- **`past_threshold` follows the percentage, not the raw loss**, so a small publisher losing most of
+  what it had escalates alongside a large one losing a quarter.
+- **A dataset can appear here and on a stall monitor at once.** They answer different questions: a feed
+  that is polled daily, publishes nothing new and watches its listings expire is both silent and
+  draining. That is not double-reporting, it is two true statements, and the supply figure is the one
+  that says how urgent it is.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `window_days` | `5` | Trailing days the decline is measured over |
+| `drop_percent` | `10` | Percentage lost between two consecutive runs that raises an incident on its own |
+| `qualify_window_days` | `10` | Longer window the decline must also show up over; never treated as shorter than `window_days` |
+| `qualify_drop_percent` | `10` | Percentage that must have been lost across `qualify_window_days`, unless the feed's delta is negative |
+| `past_threshold_drop_percent` | `25` | Net percentage lost across the window that sets `past_threshold`; never treated as looser than `drop_percent` |
+| `min_future_opportunities` | `50` | Forward supply a feed must have had at the start of the window to be worth reporting |
+| `as_of` | latest ingestion day | Evaluate as at this date (`yyyy-MM-dd`) instead of the snapshot date |
+
+A feed needs three observations inside the window, or the whole window where that is shorter, and never
+fewer than two — so `window_days=1` reports nothing rather than everything. The `trend` column always
+covers the trailing ten days, independently of `window_days`.
+
+```json
+{
+  "monitor_id": "dataset_future_decline",
+  "publisher_id": "pub_better-better-admin",
+  "publisher_name": "Better (better-admin)",
+  "dataset_url": "https://better-admin.org.uk/api/openactive/better",
+  "dataset_name": "Better Sessions and Facilities",
+  "feed_count": 1,
+  "first_detected": "2026-09-11",
+  "days_open": 4,
+  "consecutive_days": 4,
+  "past_threshold": false,
+  "status": "open",
+  "last_contacted": null,
+  "trend": [206069, 202140, 198974, 196018, 193009, 190167, 187137, 183814, 180114, 177186],
+  "detail": {
+    "reason": "monotonic_decline",
+    "window_days": 5,
+    "start_total": 190167,
+    "current_total": 177186,
+    "drop": 12981,
+    "drop_percent": 6.83,
+    "qualify_window_days": 10,
+    "qualify_start_total": 206069,
+    "qualify_drop_percent": 14.02,
+    "feeds": [
+      {
+        "feed_id": "better-admin-org-uk-api-openactive-better-scheduled-sessions",
+        "feed_name": "scheduled-sessions",
+        "reason": "monotonic_decline",
+        "start_future": 190167,
+        "current_future": 177186,
+        "drop": 12981,
+        "drop_percent": 6.83,
+        "qualify_start_future": 206069,
+        "qualify_drop_percent": 14.02,
+        "consecutive_declining_days": 4,
+        "largest_daily_drop_percent": 2.01,
+        "updated_in_window": 332,
+        "deletes_in_window": 16131,
+        "delta_in_window": -15799
+      }
+    ]
+  }
+}
+```
+
+Field notes:
+
+- The incident's identity is `dataset_url`, matching `feeds.dataset_url`. `dataset_name` is the stored
+  `feed_quality.dataset_name`, falling back to the host of the URL, so it is never empty.
+- `feed_count` is the number of **declining** feeds, not the dataset's feed count. It always equals
+  `detail.feeds.length`.
+- `first_detected` is the day the decline began: the start of the unbroken run of falls that ends the
+  window, or — when the window does not end in a fall — the day the steepest drop fell from. It is
+  always inside the window, so `days_open` never exceeds `window_days - 1`, and `consecutive_days`
+  always equals it.
+- `detail.start_total` and `detail.current_total` are the contributing feeds' supply at the first and
+  last observation in the window; `drop` is the difference and `drop_percent` that difference over
+  `start_total`, to two decimal places. A dataset's own feeds may each have fallen over different pairs
+  of days, which is why the per-feed figures are given too.
+- `detail.feeds[].largest_daily_drop_percent` is the steepest single step down in the window — the
+  figure the `sharp_drop` rule tests. For a monotonic decline it is simply the worst of many small falls
+  and may be well under `drop_percent`.
+- `detail.feeds[].updated_in_window` and `deletes_in_window` are **context and never raise anything**.
+  Read together they say what kind of decline it is: the sample above shows 15,368 deletions against
+  309 updates, a feed removing far more than it adds. A fall with no deletions behind it is supply
+  quietly expiring because nothing new is being scheduled.
+- `trend` is the contributing feeds' daily `total_future_opportunities` over the trailing **ten days**,
+  oldest first, ending on `snapshot_date`. Always ten entries, so entry *i* is the same day for every
+  incident in the response, and it covers the healthy days before the decline began because the supply
+  the dataset used to carry is the point of the column.
+  - `null` — no contributing feed completed a run that day, so nothing is known. Not the same as zero.
+- `status` is always `open` and `last_contacted` always `null`, as on every monitor.
+- There is no `feed_id`, `feed_name`, `feed_type`, `feed_url` or `quality_score`: the incident is about
+  a dataset, its feeds are in `detail.feeds`, and `feed_quality.score` is per-feed with no dataset-level
+  equivalent. As on the two other dataset-scoped monitors, these are absent rather than always-null.
+
+### `GET /admin/dataset-future-decline-trend`
+
+Counts of datasets losing forward supply on each of the last `trend_days` days, oldest first. Each day
+is evaluated independently against the same rules as the incidents endpoint, so a point shows what that
+endpoint would have reported on that day — the final point always agrees with it.
+`past_threshold_count` is always a subset of `open_count`. Counts are of **datasets**, so a publisher
+with six draining feeds is one, not six.
+
+Accepts `page`, `page_size`, `window_days`, `drop_percent`, `qualify_window_days`,
+`qualify_drop_percent`, `past_threshold_drop_percent`, `min_future_opportunities`, `as_of` as above,
+applies the same qualifying gate and excludes the same kinds, plus:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `trend_days` | `30` | Days of history to return |
+
+```json
+{
+  "data": [
+    { "date": "2026-09-12", "open_count": 18, "past_threshold_count": 4 },
+    { "date": "2026-09-13", "open_count": 15, "past_threshold_count": 3 },
+    { "date": "2026-09-14", "open_count": 10, "past_threshold_count": 0 }
+  ],
+  "meta": { "snapshot_date": "2026-09-14", "generated_at": "2026-09-14T15:22:37Z", "page": 1, "page_size": 500, "total": 30 }
+}
+```
+
+Expect this series to move about far more than the stall ones. A stall persists until a feed publishes
+again; a decline is a statement about a five-day window, so a dataset leaves the list as soon as one
+good day pushes the fall out of it.
+
 The **spine every monitor's incidents share**, and all the dashboard should rely on across them, is
 `monitor_id`, `publisher_id`, `publisher_name`, `past_threshold`, `status` and `last_contacted`.
 Everything else, including which entity the incident is about, is monitor-specific.
 
+## Data quality
+
+Not a monitor: these endpoints report how good the published data *is*, rather than detecting and
+opening incidents against it. Nothing here has a `monitor_id`, a threshold, a trend endpoint or a tile
+on `/admin/summary`.
+
+### `GET /admin/feed-quality`
+
+Every assessed feed in `feed_quality` with its quality assessment, best-scoring first, and a `summary`
+of the whole set alongside them.
+
+One row per feed. A dataset appears once per feed it publishes, so `dataset_url` and `dataset_name`
+repeat down the page; `summary.total_datasets` is the distinct count.
+
+The rules worth knowing:
+
+- **The response has a third key.** `summary` sits next to `data` and `meta`. It describes every row
+  the filters matched, **not** the page returned, so it can be read once and the rows paged beneath it.
+  It is reduced from those same rows rather than from a second query, so the two cannot disagree.
+- **Counts account for every feed.** A feed whose `status`, `grade`, `feed_type` or `feed_version` is
+  missing is counted as `unknown` rather than dropped, so each breakdown's `feed_count` sums to
+  `summary.total_feeds`. `status` and `grade` are matched case-insensitively.
+- **Averages are unweighted means over the feeds that report the value.** A feed whose completeness is
+  `null` is excluded from both the numerator and the denominator, and every mean carries the
+  `feeds_reporting` it was taken over. Read that first — the denominators differ sharply between
+  properties. A property no feed reports averages to `null`, never to `0`.
+- **`null` is never zero.** Every field but `feed_id` and `dataset_url` is nullable because every
+  column but those two is, and `null` always means the assessment did not report the value. A stored
+  `0` is a real measurement.
+- **The JSON columns are passed through exactly as stored.** `warnings`, `errors` and
+  `missing_required_fields` are the assessor's shape, not this API's. Nothing counts, parses or
+  aggregates them, and no summary figure is derived from them — `summary.feeds_with_errors` counts
+  feeds whose `status` is `ERROR`, which is not the same thing.
+- **Filters combine as they do across the API.** Values within one parameter are OR'd, different
+  parameters are AND'd. `publisher` is resolved through `feeds`, which is where publisher identity
+  lives; `feed_quality` has no publisher column, and a feed whose dataset has no `feeds` row has no
+  publisher and is therefore matched by no `publisher` value.
+
+This is not history-derived, and three things follow. It takes no date parameter of any kind — no
+`as_of`, no lookback — because `feed_quality` holds current state only. There is no sibling trend
+endpoint. And the row carries no `monitor_id`, `first_detected`, `days_open`, `consecutive_days`,
+`past_threshold` or `trend` — those fields are absent rather than null.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `dataset_url` | all | One or more dataset URLs, matched exactly. Repeated (`?dataset_url=a&dataset_url=b`) or comma-separated (`?dataset_url=a,b`) |
+| `publisher` | all | One or more publisher names, matched exactly, resolved through `feeds`. Same two forms |
+
+```json
+{
+  "data": [
+    {
+      "feed_id": "opendata-leisurecloud-live-api-feeds-ActiveLeeds-live-slots",
+      "feed_url": "https://opendata.leisurecloud.live/api/feeds/ActiveLeeds-live-slots",
+      "feed_type": "Slot",
+      "feed_version": "V2.0",
+      "is_regular": true,
+      "dataset_url": "https://activeleeds-oa.leisurecloud.net/OpenActive/",
+      "dataset_name": "Active Leeds Sessions and Facilities",
+      "publisher_id": "pub_active-leeds",
+      "publisher_name": "Active Leeds",
+      "status": "OK",
+      "grade": "Gold",
+      "score": 100,
+      "num_future_opportunity_items": 10493,
+      "completeness": {
+        "location": 100,
+        "start_date": 100,
+        "end_date": 100,
+        "activities": 0,
+        "facilities": 100,
+        "age_range": 0,
+        "level": 0,
+        "accessibility_support": 0,
+        "gender_restriction": 0
+      },
+      "warnings": [],
+      "errors": [],
+      "missing_required_fields": {},
+      "last_assessed": "2026-09-15T01:56:24.156787Z"
+    },
+    {
+      "feed_id": "halo-openactive-legendonlineservices-co-uk-api-facility-uses-events",
+      "feed_url": "https://halo-openactive.legendonlineservices.co.uk/api/facility-uses/events",
+      "feed_type": "Slot",
+      "feed_version": "V2.0",
+      "is_regular": true,
+      "dataset_url": "https://halo-openactive.legendonlineservices.co.uk/OpenActive",
+      "dataset_name": "Halo Sessions and Facilities",
+      "publisher_id": "pub_halo",
+      "publisher_name": "Halo",
+      "status": "ERROR",
+      "grade": null,
+      "score": 100,
+      "num_future_opportunity_items": 63585,
+      "completeness": {
+        "location": 100,
+        "start_date": 100,
+        "end_date": 100,
+        "activities": 100,
+        "facilities": 0,
+        "age_range": 0,
+        "level": 0,
+        "accessibility_support": 0,
+        "gender_restriction": 0
+      },
+      "warnings": ["No future opportunities scheduled"],
+      "errors": ["Data parsing error (invalid JSON or missing 'items')"],
+      "missing_required_fields": { "FacilityUse": ["activity"] },
+      "last_assessed": "2026-09-15T01:56:24.156787Z"
+    }
+  ],
+  "summary": {
+    "total_feeds": 460,
+    "total_datasets": 180,
+    "total_publishers": 179,
+    "regular_feeds": 455,
+    "irregular_feeds": 5,
+    "regularity_unknown": 0,
+    "feeds_ok": 346,
+    "feeds_with_warnings": 37,
+    "feeds_with_errors": 77,
+    "feeds_status_unknown": 0,
+    "datasets_with_errors": 37,
+    "feeds_with_future_data": 242,
+    "datasets_with_future_data": 154,
+    "total_future_opportunity_items": 5322705,
+    "feeds_scored": 258,
+    "average_score": 73.98,
+    "median_score": 92.7,
+    "min_score": 29.2,
+    "max_score": 100,
+    "score_buckets": [
+      { "lower": 0,  "upper": 20,  "feed_count": 0 },
+      { "lower": 20, "upper": 40,  "feed_count": 29 },
+      { "lower": 40, "upper": 60,  "feed_count": 60 },
+      { "lower": 60, "upper": 80,  "feed_count": 32 },
+      { "lower": 80, "upper": 100, "feed_count": 137 }
+    ],
+    "completeness": {
+      "location": { "average": 95.07, "feeds_reporting": 263 },
+      "start_date": { "average": 90.07, "feeds_reporting": 263 },
+      "end_date": { "average": 82.66, "feeds_reporting": 263 },
+      "activities": { "average": 23.79, "feeds_reporting": 263 },
+      "facilities": { "average": 69.89, "feeds_reporting": 263 },
+      "age_range": { "average": 7.23, "feeds_reporting": 263 },
+      "level": { "average": 5.43, "feeds_reporting": 263 },
+      "accessibility_support": { "average": 1.01, "feeds_reporting": 263 },
+      "gender_restriction": { "average": 12.81, "feeds_reporting": 263 }
+    },
+    "status_breakdown": [
+      { "value": "OK", "feed_count": 346, "dataset_count": 158, "share": 0.752 },
+      { "value": "ERROR", "feed_count": 77, "dataset_count": 37, "share": 0.167 },
+      { "value": "WARNING", "feed_count": 37, "dataset_count": 25, "share": 0.08 }
+    ],
+    "grade_breakdown": [
+      { "value": "unknown", "feed_count": 257, "dataset_count": 169, "share": 0.559 },
+      { "value": "Gold", "feed_count": 149, "dataset_count": 124, "share": 0.324 },
+      { "value": "Silver", "feed_count": 40, "dataset_count": 38, "share": 0.087 },
+      { "value": "Bronze", "feed_count": 14, "dataset_count": 11, "share": 0.03 }
+    ],
+    "feed_type_breakdown": [
+      { "value": "FacilityUse", "feed_count": 155, "dataset_count": 154, "share": 0.337 }
+    ],
+    "feed_version_breakdown": [
+      { "value": "V2.0", "feed_count": 258, "dataset_count": 151, "share": 0.561 },
+      { "value": "Unknown", "feed_count": 200, "dataset_count": 145, "share": 0.435 },
+      { "value": "V0.x", "feed_count": 2, "dataset_count": 2, "share": 0.004 }
+    ],
+    "oldest_assessment": "2026-09-15T01:56:24.156787Z",
+    "newest_assessment": "2026-09-15T01:56:24.156787Z"
+  },
+  "meta": {
+    "snapshot_date": "2026-09-15",
+    "generated_at": "2026-09-16T17:33:55Z",
+    "page": 1,
+    "page_size": 500,
+    "total": 460
+  }
+}
+```
+
+Field notes on the rows:
+
+- `publisher_id` is a slug derived from `publisher_name` (`pub_<slug>`), not a stored identifier, and is
+  the same value the monitors report for that publisher. `publisher_name` is `""` when the dataset has
+  no `feeds` row.
+- `dataset_name` is the stored name, falling back to the host of `dataset_url` and then to the URL
+  itself, so it is never empty. `feed_id` and `dataset_url` are the only fields that can never be null.
+- `score` is a normalised 0–100 quality score over required/recommended/optional property presence.
+  `grade` is the coarse banding the column documents as `None`, `Bronze`, `Silver` or `Gold`, though
+  in practice an ungraded feed carries `null` rather than `"None"`. The two are independent: a feed can
+  score 100 and carry no grade, as the second `data` row above does, and on 2026-09-15 most scored
+  feeds were ungraded.
+- `completeness` values are **percentages, 0–100**, not fractions. `0` means no item carries the
+  property; `null` means the assessment did not measure it.
+- `status` is the assessment outcome (`OK`, `WARNING`, `ERROR`), unrelated to the `status: "open"` that
+  every monitor's incidents carry.
+- `is_regular` is `null` when regularity was not determined — not the same as `false`.
+- `last_assessed` is when *this feed* was assessed and may be older than `meta.snapshot_date`.
+- Rows are ordered by `score` descending with unscored feeds last, then by `dataset_url` and `feed_id`.
+  The last two are what make the order total, so paging cannot show one feed twice and another never.
+
+Field notes on the summary:
+
+- `total_publishers` counts distinct non-blank publisher names. Feeds whose dataset has no `feeds` row
+  contribute to none of them, so it can sit below `total_datasets` for reasons other than one publisher
+  owning several datasets.
+- `feeds_with_errors` counts feeds whose **`status`** is `ERROR`; it is not a count of entries in the
+  `errors` column. `datasets_with_errors` is the distinct datasets behind those feeds — the number of
+  publishers worth contacting.
+- `feeds_with_future_data` counts feeds reporting more than zero future items. A feed reporting no
+  figure at all contributes to neither that count nor `total_future_opportunity_items`.
+- `average_score` and the completeness averages are means over the feeds that carry the value, whose
+  counts (`feeds_scored`, `feeds_reporting`) differ from `total_feeds` and from each other. Read
+  `median_score` next to `average_score`: a handful of very poor feeds drag the mean but not the median.
+- `score_buckets` is always five buckets of twenty in ascending order, so the histogram keeps its shape
+  whatever the data. `lower` is inclusive and `upper` exclusive, except the top bucket which includes
+  100. Counts sum to `feeds_scored`, so unscored feeds are in no bucket.
+- Every breakdown is ordered by `feed_count` descending, then `value` ascending. `dataset_count` is the
+  distinct datasets with at least one feed of that value, so those sum above `total_datasets` wherever a
+  dataset's feeds differ. Values differing only in case are one group, labelled with whichever the
+  ordering reaches first — which is why a stored `"Unknown"` feed version and a missing one are counted
+  together.
+- `oldest_assessment` and `newest_assessment` bracket the `last_assessed` timestamps. They are equal
+  whenever the assessor last ran over the whole table at once, which is the normal case.
+
+## Active Places coverage
+
+How much of Sport England's [Active Places](https://www.activeplacespower.com/) register of the built
+sporting estate in England is visible in the OpenActive data — and, read the other way, how much of the
+OpenActive data is not Active Places estate at all.
+
+**These two endpoints are the one part of the API that does not read BigQuery.** The analysis needs the
+Active Places export and an OS Code-Point Open lookup, neither of which is in the warehouse, so it runs
+in the `openactive-monitor` jobs repository and publishes two files. These endpoints mirror those files
+and recompute nothing:
+
+| File | Endpoint |
+|---|---|
+| `site_oa_mapping.csv` | `GET /admin/active-places-site-mappings` |
+| `active_places_coverage.json` | `GET /admin/active-places-coverage` |
+
+They are configured in the `ActivePlaces` section of `appsettings.json`, which is where to point a
+deployment at a fork, a branch or a pinned revision. Neither URL is a secret. The files are fetched over
+HTTP and held in memory until the same 07:00 UTC refresh the responses expire on, so every request in a
+day — and both endpoints — answer from one run of the analysis. When the files cannot be fetched or
+read, both answer **`502`** with `{ "message": "The Active Places coverage report is currently
+unavailable: …" }`; that failure is not cached, so the next request retries.
+
+Neither is a monitor. There is no `as_of`, no threshold, no trend endpoint and no tile on
+`/admin/summary` — the analysis publishes one run at a time and a past run cannot be fetched. Both take
+`meta.snapshot_date` from the report's own `run_date`, which is why the mapping endpoint fetches the
+coverage report too.
+
+The background write-up, including how the match channels were calibrated, is
+[`active_places_coverage.md`](https://github.com/openactive-contrib/openactive-monitor/blob/main/jobs/opportunity-insights/reports/active_places/active_places_coverage.md)
+next to the two files.
+
+### `GET /admin/active-places-site-mappings`
+
+Every Active Places site the OpenActive data reaches, paired with the venue that reaches it — the
+published CSV served as JSON. Ordered by site name, then nearest venue first within a site.
+
+The rules worth knowing:
+
+- **A row is a site/venue pair, not a site.** A site covered by three publishers appears three times,
+  and a venue near two sites appears once per site. `meta.total` counts pairs; the distinct site count
+  is `headline.sites_matched` on the coverage endpoint. Filter on `is_primary_for_venue` client-side
+  for one row per venue, or on `is_mutual_best` for the most confident rows only.
+- **Only matched sites are here.** The Active Places sites no OpenActive venue reaches — three quarters
+  of the register — are not in the file at all. This is the covered estate, not the register. The
+  OpenActive venues that match no site are not here either; they are summarised under `unmatched` on
+  the coverage endpoint.
+- **`match_method` is how strong the evidence is**, and the only sound way to filter out the weaker
+  rows — reading `distance_metres` alone will not do it, because two of the channels deliberately reach
+  beyond the 200m buffer:
+
+  | `match_method` | What it asserts |
+  |---|---|
+  | `spatial_and_postcode` | Within 200m **and** sharing the postcode. The strongest evidence available |
+  | `spatial` | Within 200m, on surveyed coordinates |
+  | `spatial_centroid_only` | Within 200m, but the venue's coordinates are a postcode centroid and the postcodes disagree — the proximity is partly an artefact of where the centroid fell |
+  | `postcode` | Postcodes match at 200–1000m. This is what recovers venues published at a postcode centroid |
+  | `name` | Last resort: names agree at ≥ 0.8 within 500m, applied only where the other channels found nothing. `name_similarity` is set on these rows and null on every other |
+
+- **The multi-valued columns are arrays.** `oa_location_names`, `oa_dataset_urls`,
+  `oa_publisher_names`, `oa_postal_codes`, `oa_kinds` and `oa_location_json` are pipe-joined in the CSV
+  and split here. Any of them can be empty — a venue is a *cluster* of published points, and not every
+  point carries a name or a postcode. A name may contain newlines: some publishers put the whole
+  address in the field.
+- **`oa_location_json` is the key back to the data.** Each entry is one point's `location` JSON byte for
+  byte as published, so `WHERE TO_JSON_STRING(location) = '<value>'` against `opportunities` returns
+  that point's items. Nothing here re-serialises it.
+- **Some columns of the CSV are not served**: `region_code`, `region_name`, `management_type_group`,
+  `ap_facility_types`, `venue_id`, `oa_point_count`, `oa_dataset_count` and `is_primary_for_site`.
+  Regional and management-group figures are on the coverage endpoint, and the facility type codes have
+  no published lookup to resolve them against.
+- **Nothing is recomputed.** Every value is as published, and a blank cell becomes `null` or an empty
+  array — never a zero.
+- **Filters combine as they do across the API.** Values within one parameter are OR'd, different
+  parameters are AND'd. `publisher` matches when *any* of the row's publishers is any of the values.
+
+The row carries no `monitor_id`, `first_detected`, `days_open`, `consecutive_days`, `past_threshold`,
+`status` or `trend` — those fields are absent rather than null. It carries no `publisher_id` either:
+publisher identity elsewhere on this surface is a slug over a `feeds` row, whereas the names here come
+from the analysis job's own join and a row can hold several of them.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `site_id` | all | One or more Active Places site identifiers, matched exactly. Repeated (`?site_id=a&site_id=b`) or comma-separated (`?site_id=a,b`) |
+| `local_authority_code` | all | One or more ONS local authority codes, e.g. `E07000223`, matched ignoring case. Same two forms |
+| `publisher` | all | One or more publisher names, matched exactly against any of `oa_publisher_names`. Same two forms |
+| `match_method` | all | One or more match channels, matched ignoring case. Same two forms |
+
+```json
+{
+  "data": [
+    {
+      "site_id": "1042120",
+      "site_name": "1610 ROBERT BLAKE AND ELMWOOD LEISURE",
+      "postcode": "TA6 6AW",
+      "local_authority_code": "E06000066",
+      "local_authority_name": "Somerset",
+      "ownership_type_group": "Education",
+      "site_lat": 51.12057,
+      "site_lng": -3.005673,
+      "ap_facility_count": 6,
+      "oa_location_names": ["Robert Blake Science College"],
+      "oa_lat": 51.12039249506526,
+      "oa_lng": -3.005744989225123,
+      "oa_dataset_urls": [
+        "http://data.letsride.co.uk/",
+        "https://playwaze.com/opendata/openactive"
+      ],
+      "oa_publisher_names": ["British Cycling", "Playwaze"],
+      "oa_postal_codes": ["TA6 6AW"],
+      "oa_kinds": ["Event", "ScheduledSession", "SessionSeries"],
+      "oa_opportunity_count": 122,
+      "oa_location_json": [
+        "{\"latitude\":51.120354,\"longitude\":-3.005741}",
+        "{\"latitude\":51.120431,\"longitude\":-3.005749}"
+      ],
+      "distance_metres": 20.4,
+      "match_method": "spatial_and_postcode",
+      "name_similarity": null,
+      "spatial_match": true,
+      "postcode_match": true,
+      "is_primary_for_venue": true,
+      "is_mutual_best": true
+    },
+    {
+      "site_id": "1008333",
+      "site_name": "ABBEY MEADOWS OUTDOOR POOL",
+      "postcode": "OX14 3JD",
+      "local_authority_code": "E07000180",
+      "local_authority_name": "Vale of White Horse",
+      "ownership_type_group": "Local Authority",
+      "site_lat": 51.66989,
+      "site_lng": -1.276613,
+      "ap_facility_count": 1,
+      "oa_location_names": [
+        "Abbey Close Car Park\nAbingdon\nOX14 3NJ",
+        "Abbey Meadows\n1 Abbey Close\nAbingdon\nOX14 3NJ"
+      ],
+      "oa_lat": 51.6709389955123,
+      "oa_lng": -1.2738249879552628,
+      "oa_dataset_urls": ["https://data.bookwhen.com/"],
+      "oa_publisher_names": ["Bookwhen"],
+      "oa_postal_codes": [],
+      "oa_kinds": ["SessionSeries"],
+      "oa_opportunity_count": 2,
+      "oa_location_json": ["{\"latitude\":51.670939,\"longitude\":-1.273825}"],
+      "distance_metres": 225.4,
+      "match_method": "name",
+      "name_similarity": 0.8333333333333333,
+      "spatial_match": false,
+      "postcode_match": false,
+      "is_primary_for_venue": true,
+      "is_mutual_best": false
+    }
+  ],
+  "meta": {
+    "snapshot_date": "2026-09-17",
+    "generated_at": "2026-09-17T15:20:46Z",
+    "page": 1,
+    "page_size": 500,
+    "total": 10034
+  }
+}
+```
+
+### `GET /admin/active-places-coverage`
+
+The analysis's summary report, passed through in `data` exactly as generated. Takes no parameters.
+
+`headline.coverage_pct` is the figure to lead on. What the document carries:
+
+| Section | What it holds |
+|---|---|
+| `headline` | Sites in scope, matched, missing, coverage %, and the same read from the OpenActive side |
+| `source`, `parameters` | What was analysed, and the thresholds it was analysed with |
+| `channels` | What each match channel contributed, with per-method pair/site/venue counts and median distances |
+| `distance_sensitivity` | Coverage at 25m–1000m, with the buffer in use flagged |
+| `coverage_by_region`, `coverage_by_local_authority`, `coverage_by_ownership`, `coverage_by_management`, `coverage_by_facility_type` | The same four counts cut five ways |
+| `publishers` | Which publishers account for the coverage, by sites covered |
+| `coordinate_provenance` | How many OpenActive points sit exactly on a postcode centroid, overall and per publisher |
+| `unmatched` | The OpenActive side: venues matching no site, by district, by publisher, and the largest of them |
+| `data_quality` | What was excluded from the OpenActive side and why, plus clustering diagnostics |
+
+The rules worth knowing:
+
+- **`data` is passed through unmodelled.** The report is generated by the analysis job and carries its
+  own `schema_version`, so a section added upstream reaches the dashboard without a release here. Read
+  it defensively and check `schema_version` rather than assuming a key exists. Its keys are already
+  snake_case, like the rest of the API.
+- **`meta.generated_at` is the analysis's, not this response's.** This is the one endpoint on the
+  surface where those differ: it says when the report was computed. `meta.snapshot_date` is its
+  `run_date`.
+- **Read the headline as a lower bound.** Active Places records one point per *site* while OpenActive
+  records the point a *session* happens at, and about 31% of OpenActive points are postcode centroids
+  rather than surveyed coordinates. Both push genuine matches outside the 200m buffer — which is what
+  `distance_sensitivity` is there to show.
+- **A high "absent from Active Places" figure is not a data-quality problem.** Parks, halls, streets and
+  outdoor meeting points host OpenActive opportunities and are outside the Active Places remit by
+  construction.
+- **England only**, because Active Places is an England-only register. `data_quality` accounts for every
+  OpenActive point excluded on the way.
+- **A site is counted once per facility type it offers**, so `coverage_by_facility_type` sums to more
+  than the site total.
+
+```json
+{
+  "data": {
+    "schema_version": 1,
+    "generated_at": "2026-09-17T13:07:34+00:00",
+    "run_date": "2026-09-17",
+    "source": {
+      "opportunities_table": "openactive-monitor.openactive_analytics.opportunities",
+      "active_places_data_version": "2026-09-17 03:30:29",
+      "geography_scope": "England",
+      "excluded_kinds": ["Slot"]
+    },
+    "parameters": {
+      "buffer_metres": 200.0,
+      "postcode_max_metres": 1000.0,
+      "name_max_metres": 500.0,
+      "name_threshold": 0.8,
+      "venue_cluster_metres": 50.0
+    },
+    "headline": {
+      "coverage_pct": 26.4,
+      "sites_total": 27857,
+      "sites_matched": 7351,
+      "sites_missing": 20506,
+      "local_authorities": 296,
+      "venues_total": 16405,
+      "venues_matched": 7840,
+      "venues_unmatched": 8565,
+      "venues_unmatched_pct": 52.2,
+      "pairs": 10034
+    },
+    "channels": {
+      "sites_by_proximity": 6762,
+      "sites_added_by_postcode": 503,
+      "sites_added_by_name": 86,
+      "breakdown": [
+        {
+          "method": "spatial",
+          "pairs": 5236,
+          "sites": 4407,
+          "venues": 4243,
+          "median_distance_metres": 97.9
+        }
+      ]
+    },
+    "distance_sensitivity": [
+      { "threshold_metres": 200, "sites_matched": 6762, "coverage_pct": 24.3, "is_configured_buffer": true }
+    ],
+    "coverage_by_region": [
+      { "region_name": "South East", "sites_total": 5186, "sites_matched": 1263, "sites_missing": 3923, "coverage_pct": 24.4 }
+    ],
+    "publishers": [
+      { "publisher": "British Cycling", "ap_sites_covered": 2631, "oa_venues": 2493, "local_authorities": 279 }
+    ]
+  },
+  "meta": {
+    "snapshot_date": "2026-09-17",
+    "generated_at": "2026-09-17T13:07:34Z",
+    "page": 1,
+    "page_size": 1,
+    "total": 1
+  }
+}
+```
+
 ## Source data
+
+Everything below describes the BigQuery-backed endpoints. The two
+[Active Places](#active-places-coverage) endpoints read no table at all — they mirror two files
+published by the analysis job, as that section explains.
 
 The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
 `feeds` for descriptive fields and `feed_quality` for the score. The two stall monitors read exactly
 the same per-feed publishing history — one feed at a time, one dataset at a time — which is what lets
 them partition the silence between them rather than each having its own idea of it. The orphaned-children monitor reads
 `opportunities` instead — see below. Multiple ingestion runs on the same day are
-collapsed into one day — summed for the stall monitors' `updated` counts, and collapsed with success
-winning for the error monitors' status.
+collapsed into one day — summed for the stall monitors' `updated` counts, collapsed with success
+winning for the error monitors' status, and taken from the day's **last completed run** for the
+future-decline monitor, because `total_future_opportunities` is a level rather than a counter and must
+not be added up. That monitor reads only `status = 'COMPLETE'` rows, so a failed or missing run leaves
+a gap in its history rather than a figure.
 
 `error_code` and `warning_message` were added to the table recently and are populated only for the most
 recent days; older `ERROR` rows carry neither.
@@ -649,8 +1377,27 @@ with no `ingestion_date` and so no history of any kind. Consequences:
 - `dataset_url` is the join key to `feeds` (for `publisher_name`) and `feed_quality` (for
   `dataset_name`). On 2026-09-09, 159 of the 160 dataset URLs in `opportunities` matched a `feeds` row;
   the one that does not would report with empty descriptive fields.
-- It is large — a single orphan query scans roughly 2.6 GB — which the daily cache absorbs but which
-  makes `/admin/summary` noticeably slower than it was.
+- It is large — a single orphan query scans roughly 2.8 GB, of which about 100 MB is the `location`
+  column the empty-location test reads — which the daily cache absorbs but which makes
+  `/admin/summary` noticeably slower than it was.
+
+`feed_quality` is the third current-state table, and the shape `/admin/feed-quality` is built around:
+one row per feed, overwritten by the assessment pipeline, with `last_assessed` its only temporal
+column and no history of any kind. Consequences:
+
+- It **can** date itself, unlike `opportunities`, so `/admin/feed-quality` takes its
+  `meta.snapshot_date` from `MAX(DATE(last_assessed))` rather than from `opportunity_ingestion`. That
+  is the one place on this surface where `snapshot_date` does not come from the ingestion run, and
+  deliberately so: the assessments are written by their own pipeline, and dating them from the
+  ingestion day would label them with a day the assessor may not have run.
+- No trend endpoint, no `as_of`, no date window.
+- It has no publisher column. `publisher_name` is joined from `feeds` on `dataset_url`, which holds one
+  row per feed and so is collapsed to one row per dataset before the join — joining it raw would fan a
+  dataset's assessments out by its feed count.
+- It is small — one row per feed, 460 of them on 2026-09-15 — which is why `/admin/feed-quality` loads
+  the whole filtered set and reduces the summary from it in C# rather than running a second aggregate
+  query. Every other monitor aggregates in SQL because its source table is orders of magnitude larger.
+- The completeness columns are stored as **percentages, 0–100**, not fractions.
 
 **`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
 2026-08-20 duplicated. Consequences worth remembering when reading the numbers:
@@ -666,7 +1413,11 @@ with no `ingestion_date` and so no history of any kind. Consequences:
   `dataset-stall-incidents` is a short list — a single dataset on 2026-09-10 — while
   `single-feed-stall-incidents` runs to dozens. That ratio is the monitor working, not a gap in it.
 - The ingestion error monitor's 15-day success lookback is inside what the table holds, so it is the one
-  window the data can currently exercise in full.
+  window the data can currently exercise in full. So is the future-decline monitor's five-day window,
+  which is the other; its 30-day trend, though, can only have points for the days the table covers.
+- The duplicated day and the missing one are both absorbed by the future-decline monitor without
+  special handling: same-day runs collapse to one figure, and a missing day is simply one fewer
+  observation in the window rather than a fall.
 
 ## Tests
 
@@ -685,13 +1436,31 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~OrphanedChildrenDetectorTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~DatasetFutureDeclineDetectorTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~FeedQualitySummariserTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~AdminSlugTests"
+
+# the Active Places readers and filter — pure, and with no network either
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesMappingParserTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesCoverageReaderTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesMappingFilterTests"
 ```
 
+The Active Places endpoint tests need the admin token and network access to wherever the `ActivePlaces`
+section points, but no BigQuery credentials — they read no table.
+
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
-`Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs` and
-`Services/Admin/OrphanedChildrenMonitor.cs`, and the
-summary arithmetic in `Services/Admin/MonitorSummaries.cs`, all deliberately free of BigQuery and
+`Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs`,
+`Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, and the
+summary arithmetic in `Services/Admin/MonitorSummaries.cs` and
+`Services/Admin/FeedQualityMonitor.cs`. The Active Places readers in
+`Services/Admin/ActivePlacesMonitor.cs` are split the same way, with every byte of network handling kept
+out in `Services/Admin/ActivePlacesSource.cs`. All of them are deliberately free of BigQuery and
 ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live

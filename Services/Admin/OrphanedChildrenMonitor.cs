@@ -11,11 +11,15 @@ using MonitorApi.Models;
 // `opportunities` is a current-state mirror with no per-day snapshots. Hence no trend endpoint, no
 // `as_of`, no date filtering of any kind, and thresholds counted in orphans rather than in days. The
 // query takes no parameters at all: it asks one question of the whole table.
+//
+// An orphan is a child that is *unplaceable*, not merely one with a dangling parent reference: it must
+// also publish no location of its own. A child carrying its own location can still be found, mapped and
+// booked by a consumer who cannot resolve its superEvent, so it is counted but never examined.
 namespace MonitorApi.Services.Admin;
 
 /// <summary>
-/// Tunable thresholds for the <c>dataset_orphaned_children</c> monitor, both counted in orphaned
-/// children.
+/// Tunable thresholds for the <c>dataset_orphaned_children</c> monitor: two counted in orphaned
+/// children, one a share of the dataset's children.
 /// </summary>
 /// <remarks>
 /// Deliberately carries nothing measured in days — no <c>TrendDays</c>, no lookback.
@@ -25,25 +29,47 @@ namespace MonitorApi.Services.Admin;
 public sealed record OrphanedChildrenThresholds
 {
 	/// <summary>
-	/// Orphaned children that open an incident. At the default of one, a single orphan is enough.
+	/// Orphaned children that open an incident.
 	/// </summary>
-	public int MinOrphans { get; init; } = 1;
+	public int MinOrphans { get; init; } = 1_000;
+
+	/// <summary>
+	/// Orphaned children as a fraction of everything the dataset publishes, below which no incident is
+	/// raised however large the count. Applied to <see cref="OrphanedChildren.OrphanShare"/>, so the
+	/// denominator is <c>child_count</c> — every <c>Slot</c> and <c>ScheduledSession</c> — not the
+	/// examined subset.
+	/// </summary>
+	/// <remarks>
+	/// The gate <see cref="MinOrphans"/> cannot supply. A large publisher can clear any absolute count
+	/// while a rounding error of its catalogue is broken; a share says how much of the dataset a
+	/// consumer actually cannot use. Both must be met: they are ANDed, not ORed.
+	/// </remarks>
+	public double MinShare { get; init; } = 0.10;
 
 	/// <summary>Orphaned children after which an open incident is flagged as past threshold.</summary>
-	public int PastThresholdOrphans { get; init; } = 100;
+	public int PastThresholdOrphans { get; init; } = 10_000;
 
 	/// <summary>
 	/// Past threshold can never be looser than the open threshold, otherwise a summary tile's
 	/// <c>past_threshold_count</c> could exceed its <c>count</c>.
 	/// </summary>
 	public int EffectivePastThresholdOrphans => Math.Max(PastThresholdOrphans, MinOrphans);
+
+	/// <summary>
+	/// <see cref="MinShare"/> held to a real fraction. A share above one admits nothing and a negative
+	/// one is no gate at all; both are caller error rather than something the detector should honour.
+	/// </summary>
+	public double EffectiveMinShare => double.IsNaN(MinShare) ? 0 : Math.Clamp(MinShare, 0, 1);
 }
 
 /// <summary>
 /// A referenced <c>superEvent</c> the dataset does not hold, with how many children point at it.
 /// </summary>
 /// <param name="MissingId">The <c>data_id</c> that could not be found.</param>
-/// <param name="ChildCount">Children referencing it — how much one fix would repair.</param>
+/// <param name="ChildCount">
+/// Location-less children referencing it — how much one fix would repair. Children that reference it
+/// and carry their own location are not counted here: they are not orphaned.
+/// </param>
 public sealed record MissingParent(string MissingId, long ChildCount);
 
 /// <summary>
@@ -58,11 +84,13 @@ public sealed record MissingParent(string MissingId, long ChildCount);
 /// </param>
 /// <param name="CheckedCount">
 /// Subset of <paramref name="ChildCount"/> actually examined: those naming their parent with a JSON
-/// scalar reference. A child that inlines its <c>superEvent</c> as an object carries its parent with
-/// it and cannot dangle.
+/// scalar reference <em>and</em> publishing no location of their own. A child that inlines its
+/// <c>superEvent</c> as an object carries its parent with it and cannot dangle; a child with its own
+/// location is placeable whether or not its parent resolves. Neither is examined.
 /// </param>
 /// <param name="OrphanCount">
-/// Subset of <paramref name="CheckedCount"/> whose referenced parent is not held for this dataset.
+/// Subset of <paramref name="CheckedCount"/> whose referenced parent is not held for this dataset —
+/// so: a dangling reference and no location to fall back on.
 /// </param>
 /// <param name="MissingParentCount">
 /// Distinct missing parent ids behind <paramref name="OrphanCount"/> — the actionable figure, since one
@@ -92,10 +120,13 @@ public sealed record OrphanedChildren
 	/// <summary>Every child of the monitored kinds the dataset publishes, across all kinds.</summary>
 	public required long ChildCount { get; init; }
 
-	/// <summary>Subset of <see cref="ChildCount"/> examined for a dangling reference.</summary>
+	/// <summary>
+	/// Subset of <see cref="ChildCount"/> examined for a dangling reference: children naming a parent
+	/// by reference and publishing no location of their own.
+	/// </summary>
 	public required long CheckedCount { get; init; }
 
-	/// <summary>Children whose referenced parent is missing.</summary>
+	/// <summary>Location-less children whose referenced parent is missing.</summary>
 	public required long OrphanCount { get; init; }
 
 	/// <summary>
@@ -125,7 +156,7 @@ public sealed record OrphanedChildren
 
 /// <summary>
 /// Pure detection logic for the <c>dataset_orphaned_children</c> monitor: a dataset publishing children
-/// whose parent event is missing from the same dataset.
+/// whose parent event is missing from the same dataset and which carry no location of their own.
 /// </summary>
 /// <remarks>
 /// Thin on purpose. Deciding what "orphaned" means is an anti-join over hundreds of thousands of rows
@@ -156,9 +187,14 @@ public static class OrphanedChildrenDetector
 
 	/// <summary>
 	/// Folds the per-kind rows into one incident per dataset and returns those that reach
-	/// <see cref="OrphanedChildrenThresholds.MinOrphans"/>, worst first.
+	/// <see cref="OrphanedChildrenThresholds.MinOrphans"/> <em>and</em>
+	/// <see cref="OrphanedChildrenThresholds.MinShare"/>, worst first.
 	/// </summary>
 	/// <remarks>
+	/// The two gates are ANDed. A dataset has to be broken in absolute terms and broken as a proportion
+	/// of itself, which is what keeps a 200,000-child publisher with 1,500 orphans out of a list meant
+	/// for datasets a consumer cannot use.
+	///
 	/// Ordering is total: orphan count descending, then share descending, then <c>dataset_url</c>
 	/// ordinally. That last tiebreak is not cosmetic — orphans cluster in a few datasets, so ties are
 	/// common, and without it two pages of the same result set could overlap or drop a row.
@@ -192,6 +228,14 @@ public static class OrphanedChildrenDetector
 			}
 
 			var childCount = kinds.Sum(k => k.ChildCount);
+			var share = Share(orphanCount, childCount);
+
+			// Share is read from the same helper the incident carries, so the gate can never disagree
+			// with the orphan_share the dashboard is filtered on.
+			if (share < thresholds.EffectiveMinShare)
+			{
+				continue;
+			}
 
 			incidents.Add(new OrphanedChildren
 			{
@@ -199,7 +243,7 @@ public static class OrphanedChildrenDetector
 				ChildCount = childCount,
 				CheckedCount = kinds.Sum(k => k.CheckedCount),
 				OrphanCount = orphanCount,
-				OrphanShare = Share(orphanCount, childCount),
+				OrphanShare = share,
 				MissingParentCount = kinds.Sum(k => k.MissingParentCount),
 				ByKind = kinds,
 				MissingParents = WorstMissingParents(kinds),
@@ -255,10 +299,17 @@ internal static class OrphanedChildrenQuery
 	/// ids that exist. Every child is counted however long ago it was added — the table holds current
 	/// state, so a child in it is a child a consumer can see today, whatever its <c>last_updated</c>.
 	///
-	/// Children are collapsed to distinct <c>(dataset_url, kind, parent_id)</c> before the anti-join:
-	/// many children share one missing parent, so this shrinks the probe side by that fan-in ratio and
-	/// makes <c>missing_parent_count</c> and the evidence sample by-products rather than extra passes.
-	/// It also references the CTE exactly once — a <c>WITH</c> read twice may be re-evaluated.
+	/// Children are collapsed to distinct <c>(dataset_url, kind, parent_id, location_empty)</c> before
+	/// the anti-join: many children share one missing parent, so this shrinks the probe side by that
+	/// fan-in ratio and makes <c>missing_parent_count</c> and the evidence sample by-products rather
+	/// than extra passes. It also references the CTE exactly once — a <c>WITH</c> read twice may be
+	/// re-evaluated.
+	///
+	/// A child is orphaned only if it also publishes no location — <c>NULL</c>, a JSON <c>null</c>, or
+	/// <c>{}</c>. The test sits on the child rather than on the join, so it narrows
+	/// <c>checked_count</c> and <c>orphan_count</c> while <c>child_count</c> stays every child of these
+	/// kinds: <c>orphan_share</c> remains orphans over everything the dataset publishes, comparable
+	/// with the datasets that have none.
 	///
 	/// Neither side is filtered by date. "Do we hold this id at all" is a question with no time in it,
 	/// and a <c>FacilityUse</c> or <c>SessionSeries</c> is slowly changing: ingested once, its
@@ -271,7 +322,7 @@ internal static class OrphanedChildrenQuery
 	/// </remarks>
 	/// <param name="opportunitiesTable">Fully qualified <c>opportunities</c> table name.</param>
 	public static string OrphanCountsSql(string opportunitiesTable) =>
-		$"""
+		$$"""
 		WITH children AS (
 		  SELECT dataset_url,
 		         kind,
@@ -287,20 +338,33 @@ internal static class OrphanedChildrenQuery
 		         -- such a matching reference into a false orphan.
 		         IF(JSON_TYPE(has_superEvent) = 'string',
 		            TRIM(JSON_VALUE(has_superEvent), '"'), NULL) AS parent_id,
+		         -- The child carries no location of its own: SQL NULL, a JSON null, or the empty
+		         -- object. Only these can be orphaned. A child that publishes a location of its own is
+		         -- still placeable by a consumer who cannot resolve its parent, so it is counted in the
+		         -- denominator but never examined.
+		         --
+		         -- JSON_TYPE is the same test used on has_superEvent above, and fails loudly rather
+		         -- than silently if the column ever stops being JSON. TO_JSON_STRING normalises before
+		         -- the comparison, so whitespace inside the object does not hide an empty one.
+		         (location IS NULL
+		          OR JSON_TYPE(location) = 'null'
+		          OR TO_JSON_STRING(location) = '{}') AS location_empty,
 		         COUNT(*) AS child_rows
-		  FROM {opportunitiesTable}
+		  FROM {{opportunitiesTable}}
 		  WHERE kind IN ('Slot', 'ScheduledSession')
 		        -- Defensive: every row carries one today. A NULL here could not be attributed to a
 		        -- publisher, and would report as an orphan for free, since NULL never joins.
 		        AND dataset_url IS NOT NULL
-		  GROUP BY dataset_url, kind, parent_id
+		  -- location_empty joins the group key so each (dataset, kind, parent) splits into at most
+		  -- two rows, one per side of the location test, and every count below stays exact.
+		  GROUP BY dataset_url, kind, parent_id, location_empty
 		),
 		parents AS (
 		  -- DISTINCT is load-bearing rather than an optimisation: without it a parent present more than
 		  -- once fans its child row out, inflating child_count while leaving orphan_count correct, so
 		  -- orphan_share would silently fall.
 		  SELECT DISTINCT dataset_url, data_id
-		  FROM {opportunitiesTable}
+		  FROM {{opportunitiesTable}}
 		  WHERE dataset_url IS NOT NULL
 		        AND data_id IS NOT NULL
 		),
@@ -308,8 +372,9 @@ internal static class OrphanedChildrenQuery
 		  SELECT c.dataset_url,
 		         c.kind,
 		         c.parent_id,
+		         c.location_empty,
 		         c.child_rows,
-		         (c.parent_id IS NOT NULL AND p.data_id IS NULL) AS is_orphan
+		         (c.parent_id IS NOT NULL AND c.location_empty AND p.data_id IS NULL) AS is_orphan
 		  FROM children AS c
 		  LEFT JOIN parents AS p
 		    ON p.dataset_url = c.dataset_url
@@ -318,8 +383,10 @@ internal static class OrphanedChildrenQuery
 		SELECT dataset_url,
 		       kind,
 		       SUM(child_rows) AS child_count,
-		       SUM(IF(parent_id IS NOT NULL, child_rows, 0)) AS checked_count,
+		       SUM(IF(parent_id IS NOT NULL AND location_empty, child_rows, 0)) AS checked_count,
 		       SUM(IF(is_orphan, child_rows, 0)) AS orphan_count,
+		       -- Still one row per missing parent: is_orphan implies location_empty, so only the
+		       -- location-empty side of a parent's two rows can ever be flagged.
 		       COUNTIF(is_orphan) AS missing_parent_count,
 		       -- Worst offenders first, so the sample is evidence somebody can act on rather than an
 		       -- arbitrary slice; parent_id breaks ties so it is stable between requests. The LIMIT
@@ -327,7 +394,7 @@ internal static class OrphanedChildrenQuery
 		       ARRAY_AGG(IF(is_orphan, STRUCT(parent_id AS missing_id, child_rows AS child_count), NULL)
 		                 IGNORE NULLS
 		                 ORDER BY child_rows DESC, parent_id
-		                 LIMIT {OrphanedChildrenDetector.MissingParentSample}) AS missing_parents
+		                 LIMIT {{OrphanedChildrenDetector.MissingParentSample}}) AS missing_parents
 		FROM flagged
 		GROUP BY dataset_url, kind
 		""";

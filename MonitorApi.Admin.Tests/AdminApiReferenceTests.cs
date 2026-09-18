@@ -35,6 +35,11 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/feed-ingestion-error-incidents", paths);
 		Assert.Contains("/admin/feed-ingestion-error-trend", paths);
 		Assert.Contains("/admin/dataset-orphaned-children-incidents", paths);
+		Assert.Contains("/admin/dataset-future-decline-incidents", paths);
+		Assert.Contains("/admin/dataset-future-decline-trend", paths);
+		Assert.Contains("/admin/feed-quality", paths);
+		Assert.Contains("/admin/active-places-site-mappings", paths);
+		Assert.Contains("/admin/active-places-coverage", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -46,7 +51,15 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	[InlineData("/admin/feed-ingestion-error-trend", "page,page_size,trend_days,success_lookback_days,error_days,past_threshold_days,as_of")]
 	// No date parameter of any kind: opportunities holds current state only, so a past date cannot be
 	// answered and there is nothing to window.
-	[InlineData("/admin/dataset-orphaned-children-incidents", "page,page_size,min_orphans,past_threshold_orphans")]
+	[InlineData("/admin/dataset-orphaned-children-incidents", "page,page_size,min_orphans,min_share,past_threshold_orphans")]
+	[InlineData("/admin/dataset-future-decline-incidents", "page,page_size,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
+	[InlineData("/admin/dataset-future-decline-trend", "page,page_size,trend_days,window_days,drop_percent,qualify_window_days,qualify_drop_percent,past_threshold_drop_percent,min_future_opportunities,as_of")]
+	// Not a monitor: feed_quality is current state, so there is no as_of and no threshold to tune —
+	// only paging and the two identity filters.
+	[InlineData("/admin/feed-quality", "page,page_size,dataset_url,publisher")]
+	// Not a monitor and not from BigQuery: the analysis publishes one run at a time, so there is no
+	// as_of and no threshold to tune — only paging and the four identity filters.
+	[InlineData("/admin/active-places-site-mappings", "page,page_size,site_id,local_authority_code,publisher,match_method")]
 	public async Task AdminDocument_DocumentsTheQueryParametersWithTheirDefaults(string path, string expected)
 	{
 		using var client = _fixture.CreateClient();
@@ -62,6 +75,26 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 			.ToList();
 
 		Assert.Equal(expected.Split(','), parameters);
+	}
+
+	/// <summary>
+	/// <c>/admin/active-places-coverage</c> takes nothing at all: it answers with one published report,
+	/// which cannot be paged, filtered or asked for as of a past day.
+	/// </summary>
+	[Fact]
+	public async Task AdminDocument_ShowsTheCoverageReportTakesNoParameters()
+	{
+		using var client = _fixture.CreateClient();
+		var document = await client.GetFromJsonAsync<JsonElement>("/openapi/admin.json");
+
+		var operation = document
+			.GetProperty("paths")
+			.GetProperty("/admin/active-places-coverage")
+			.GetProperty("get");
+
+		Assert.False(
+			operation.TryGetProperty("parameters", out var parameters) && parameters.GetArrayLength() > 0,
+			"the endpoint documents query parameters it does not take");
 	}
 
 	[Fact]
@@ -117,12 +150,77 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.DoesNotContain("trend", orphans);
 		Assert.DoesNotContain("quality_score", orphans);
 
+		var decline = schemas.GetProperty("DatasetFutureDeclineIncident").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("monitor_id", decline);
+		Assert.Contains("past_threshold", decline);
+		Assert.Contains("dataset_url", decline);
+		Assert.Contains("feed_count", decline);
+		Assert.Contains("trend", decline);
+
+		// Dataset-scoped for the same reasons as the two above: the publisher is who gets contacted, and
+		// the feeds actually losing supply are in detail.feeds with their own figures.
+		Assert.DoesNotContain("feed_id", decline);
+		Assert.DoesNotContain("feed_url", decline);
+		Assert.DoesNotContain("quality_score", decline);
+
+		var declineDetail = schemas.GetProperty("DatasetFutureDeclineIncidentDetail").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("reason", declineDetail);
+		Assert.Contains("drop", declineDetail);
+		Assert.Contains("drop_percent", declineDetail);
+		Assert.Contains("qualify_window_days", declineDetail);
+		Assert.Contains("qualify_drop_percent", declineDetail);
+		Assert.Contains("feeds", declineDetail);
+
+		var declineFeed = schemas.GetProperty("DatasetFutureDeclineFeed").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("qualify_drop_percent", declineFeed);
+		Assert.Contains("delta_in_window", declineFeed);
+
 		var errorDetail = schemas.GetProperty("IngestionErrorIncidentDetail").GetProperty("properties")
 			.EnumerateObject().Select(p => p.Name).ToList();
 
 		Assert.Contains("error_code", errorDetail);
 		Assert.Contains("error_message", errorDetail);
 		Assert.Contains("last_completed", errorDetail);
+
+		var quality = schemas.GetProperty("FeedQualityRow").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("dataset_url", quality);
+		Assert.Contains("feed_version", quality);
+		Assert.Contains("num_future_opportunity_items", quality);
+		Assert.Contains("missing_required_fields", quality);
+		Assert.Contains("last_assessed", quality);
+
+		// Not an incident: feed_quality holds current state, so the monitor spine is absent rather than
+		// present-and-always-null, for the reason OrphanedChildrenIncident documents.
+		Assert.DoesNotContain("monitor_id", quality);
+		Assert.DoesNotContain("first_detected", quality);
+		Assert.DoesNotContain("days_open", quality);
+		Assert.DoesNotContain("consecutive_days", quality);
+		Assert.DoesNotContain("past_threshold", quality);
+		Assert.DoesNotContain("trend", quality);
+
+		var qualitySummary = schemas.GetProperty("FeedQualitySummary").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("total_feeds", qualitySummary);
+		Assert.Contains("total_datasets", qualitySummary);
+		Assert.Contains("average_score", qualitySummary);
+		Assert.Contains("score_buckets", qualitySummary);
+		Assert.Contains("feeds_with_future_data", qualitySummary);
+		Assert.Contains("grade_breakdown", qualitySummary);
+
+		var completeness = schemas.GetProperty("FeedQualityAverage").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("average", completeness);
+		Assert.Contains("feeds_reporting", completeness);
 
 		var meta = schemas.GetProperty("AdminPageMeta").GetProperty("properties")
 			.EnumerateObject().Select(p => p.Name).ToList();

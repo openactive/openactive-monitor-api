@@ -55,6 +55,31 @@ internal static class BigQueryValueParser
 		return null;
 	}
 
+	/// <summary>
+	/// Reads a BigQuery <c>BOOL</c>. The client hands one back as a <see cref="bool"/> in practice, but a
+	/// value that arrives as text (<c>"true"</c>, <c>"false"</c>) is parsed rather than discarded, in
+	/// keeping with the numeric helpers either side of it.
+	/// </summary>
+	public static bool? AsBool(object? value)
+	{
+		if (value is null)
+		{
+			return null;
+		}
+
+		if (value is bool b)
+		{
+			return b;
+		}
+
+		if (bool.TryParse(value.ToString(), out var parsed))
+		{
+			return parsed;
+		}
+
+		return null;
+	}
+
 	public static long? AsLong(object? value)
 	{
 		if (value is null)

@@ -27,6 +27,11 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/feed-ingestion-error-incidents`: feeds whose ingestion is failing now but was completing recently
 - `GET /admin/feed-ingestion-error-trend`: daily open/past-threshold ingestion error counts
 - `GET /admin/dataset-orphaned-children-incidents`: datasets publishing Slots or ScheduledSessions whose parent event is missing from the same dataset
+- `GET /admin/dataset-future-decline-incidents`: datasets whose future opportunity supply is draining while their feeds keep ingesting successfully
+- `GET /admin/dataset-future-decline-trend`: daily open/past-threshold future-supply decline counts
+- `GET /admin/feed-quality`: every assessed feed's quality row from `feed_quality`, plus an estate-wide quality summary (optional dataset_url/publisher filters)
+- `GET /admin/active-places-site-mappings`: every Active Places site the OpenActive data reaches, paired with the venue that reaches it (optional site_id/local_authority_code/publisher/match_method filters)
+- `GET /admin/active-places-coverage`: the Active Places coverage report — headline coverage, breakdowns by area, ownership and publisher, and the unmatched OpenActive venues
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.
