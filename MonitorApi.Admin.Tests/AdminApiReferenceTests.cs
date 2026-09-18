@@ -38,6 +38,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/dataset-future-decline-incidents", paths);
 		Assert.Contains("/admin/dataset-future-decline-trend", paths);
 		Assert.Contains("/admin/feed-quality", paths);
+		Assert.Contains("/admin/active-places-site-mappings", paths);
+		Assert.Contains("/admin/active-places-coverage", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -55,6 +57,9 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	// Not a monitor: feed_quality is current state, so there is no as_of and no threshold to tune —
 	// only paging and the two identity filters.
 	[InlineData("/admin/feed-quality", "page,page_size,dataset_url,publisher")]
+	// Not a monitor and not from BigQuery: the analysis publishes one run at a time, so there is no
+	// as_of and no threshold to tune — only paging and the four identity filters.
+	[InlineData("/admin/active-places-site-mappings", "page,page_size,site_id,local_authority_code,publisher,match_method")]
 	public async Task AdminDocument_DocumentsTheQueryParametersWithTheirDefaults(string path, string expected)
 	{
 		using var client = _fixture.CreateClient();
@@ -70,6 +75,26 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 			.ToList();
 
 		Assert.Equal(expected.Split(','), parameters);
+	}
+
+	/// <summary>
+	/// <c>/admin/active-places-coverage</c> takes nothing at all: it answers with one published report,
+	/// which cannot be paged, filtered or asked for as of a past day.
+	/// </summary>
+	[Fact]
+	public async Task AdminDocument_ShowsTheCoverageReportTakesNoParameters()
+	{
+		using var client = _fixture.CreateClient();
+		var document = await client.GetFromJsonAsync<JsonElement>("/openapi/admin.json");
+
+		var operation = document
+			.GetProperty("paths")
+			.GetProperty("/admin/active-places-coverage")
+			.GetProperty("get");
+
+		Assert.False(
+			operation.TryGetProperty("parameters", out var parameters) && parameters.GetArrayLength() > 0,
+			"the endpoint documents query parameters it does not take");
 	}
 
 	[Fact]

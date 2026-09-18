@@ -4,7 +4,8 @@
 
 ASP.NET Core (net10.0) Web API that serves the OpenActive public dashboards by querying a
 Google BigQuery analytics dataset. There is no database of its own and no ORM — every endpoint
-builds a SQL string and runs it against BigQuery.
+builds a SQL string and runs it against BigQuery. The one exception is the two `/admin/active-places-*`
+endpoints, which mirror two files published by the Active Places coverage analysis over HTTP.
 
 Deployed to Azure App Service from `main` (`.github/workflows/CD.yml`); PRs run the integration
 test suite (`.github/workflows/CI.yml`).
@@ -39,7 +40,7 @@ Do not merge the two, and do not refactor `ApiController` while adding admin end
 | `Models/Admin/` | Admin wire contracts (`AdminPage<T>`, incident/trend models) |
 | `Services/Admin/` | Pure monitor logic and the SQL/parsing it runs on — no ASP.NET types |
 | `Tables.cs` | BigQuery table name constants — never hardcode a table name |
-| `ApiOptions.cs` / `BigQueryOptions.cs` | Bound from the `Api` / `BigQuery` config sections |
+| `ApiOptions.cs` / `BigQueryOptions.cs` / `ActivePlacesOptions.cs` | Bound from the `Api` / `BigQuery` / `ActivePlaces` config sections |
 | `MonitorApi.Tests/` | Analytics integration tests against live BigQuery |
 | `MonitorApi.Admin.Tests/` | Admin tests: pure rule tests (no credentials) + endpoint tests |
 | `docs/development.md`, `docs/admin-api.md` | Endpoint lists and semantics — keep in sync with code |

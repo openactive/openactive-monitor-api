@@ -157,9 +157,23 @@ public class DatasetFutureDeclineIncidentsEndpointTests(AdminApiFixture fixture)
 			{
 				Assert.Equal(feed.UpdatedInWindow - feed.DeletesInWindow, feed.DeltaInWindow);
 
-				// The qualifying window is a superset of the detection window ending on the same day, so
-				// the longer look-back can never start from less supply than the shorter one.
-				Assert.True(feed.QualifyStartFuture >= feed.StartFuture);
+				// The qualifying window starts from an *earlier* observation, not from a larger one, so
+				// there is no ordering between the two start figures to assert: a feed that grew and then
+				// turned — 78 ten days ago, 92 five days ago, 70 today — is precisely what this monitor
+				// exists to catch, and its ten-day start sits below its five-day one. What can be checked
+				// about the pair is that the percentage published between them is the one they imply.
+				Assert.Equal(
+					feed.QualifyStartFuture <= 0
+						? 0
+						: Math.Round(
+							Math.Max(0, feed.QualifyStartFuture - feed.CurrentFuture) * 100.0 / feed.QualifyStartFuture,
+							2),
+					feed.QualifyDropPercent,
+					2);
+
+				// Floored at zero rather than going negative: a feed holding more now than it did ten days
+				// ago has no qualifying drop to report, and can then only be reported on the delta clause.
+				Assert.True(feed.QualifyDropPercent >= 0);
 
 				Assert.True(
 					feed.QualifyDropPercent >= 10 || feed.DeltaInWindow < 0,

@@ -169,7 +169,11 @@ public sealed class DatasetFutureDeclineFeed
 
 	/// <summary>
 	/// <see cref="CurrentFuture"/> measured back to <see cref="QualifyStartFuture"/>, as a percentage —
-	/// the figure the qualifying gate tests.
+	/// the figure the qualifying gate tests. Floored at <c>0</c>, never negative: a feed holding more
+	/// than it did at the start of the qualifying window reports <c>0</c> here and can only have been
+	/// reported on the delta clause. <see cref="QualifyStartFuture"/> is an earlier observation than
+	/// <see cref="StartFuture"/>, not necessarily a larger one, so this can sit below
+	/// <see cref="DropPercent"/>.
 	/// </summary>
 	public required double QualifyDropPercent { get; init; }
 

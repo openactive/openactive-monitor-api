@@ -27,6 +27,8 @@ http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToke
 http://localhost:5268/admin/dataset-future-decline-incidents?token=<AdminToken>
 http://localhost:5268/admin/dataset-future-decline-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-quality?token=<AdminToken>
+http://localhost:5268/admin/active-places-site-mappings?token=<AdminToken>
+http://localhost:5268/admin/active-places-coverage?token=<AdminToken>
 ```
 
 ## API reference
@@ -1065,7 +1067,282 @@ Field notes on the summary:
 - `oldest_assessment` and `newest_assessment` bracket the `last_assessed` timestamps. They are equal
   whenever the assessor last ran over the whole table at once, which is the normal case.
 
+## Active Places coverage
+
+How much of Sport England's [Active Places](https://www.activeplacespower.com/) register of the built
+sporting estate in England is visible in the OpenActive data — and, read the other way, how much of the
+OpenActive data is not Active Places estate at all.
+
+**These two endpoints are the one part of the API that does not read BigQuery.** The analysis needs the
+Active Places export and an OS Code-Point Open lookup, neither of which is in the warehouse, so it runs
+in the `openactive-monitor` jobs repository and publishes two files. These endpoints mirror those files
+and recompute nothing:
+
+| File | Endpoint |
+|---|---|
+| `site_oa_mapping.csv` | `GET /admin/active-places-site-mappings` |
+| `active_places_coverage.json` | `GET /admin/active-places-coverage` |
+
+They are configured in the `ActivePlaces` section of `appsettings.json`, which is where to point a
+deployment at a fork, a branch or a pinned revision. Neither URL is a secret. The files are fetched over
+HTTP and held in memory until the same 07:00 UTC refresh the responses expire on, so every request in a
+day — and both endpoints — answer from one run of the analysis. When the files cannot be fetched or
+read, both answer **`502`** with `{ "message": "The Active Places coverage report is currently
+unavailable: …" }`; that failure is not cached, so the next request retries.
+
+Neither is a monitor. There is no `as_of`, no threshold, no trend endpoint and no tile on
+`/admin/summary` — the analysis publishes one run at a time and a past run cannot be fetched. Both take
+`meta.snapshot_date` from the report's own `run_date`, which is why the mapping endpoint fetches the
+coverage report too.
+
+The background write-up, including how the match channels were calibrated, is
+[`active_places_coverage.md`](https://github.com/openactive-contrib/openactive-monitor/blob/main/jobs/opportunity-insights/reports/active_places/active_places_coverage.md)
+next to the two files.
+
+### `GET /admin/active-places-site-mappings`
+
+Every Active Places site the OpenActive data reaches, paired with the venue that reaches it — the
+published CSV served as JSON. Ordered by site name, then nearest venue first within a site.
+
+The rules worth knowing:
+
+- **A row is a site/venue pair, not a site.** A site covered by three publishers appears three times,
+  and a venue near two sites appears once per site. `meta.total` counts pairs; the distinct site count
+  is `headline.sites_matched` on the coverage endpoint. Filter on `is_primary_for_venue` client-side
+  for one row per venue, or on `is_mutual_best` for the most confident rows only.
+- **Only matched sites are here.** The Active Places sites no OpenActive venue reaches — three quarters
+  of the register — are not in the file at all. This is the covered estate, not the register. The
+  OpenActive venues that match no site are not here either; they are summarised under `unmatched` on
+  the coverage endpoint.
+- **`match_method` is how strong the evidence is**, and the only sound way to filter out the weaker
+  rows — reading `distance_metres` alone will not do it, because two of the channels deliberately reach
+  beyond the 200m buffer:
+
+  | `match_method` | What it asserts |
+  |---|---|
+  | `spatial_and_postcode` | Within 200m **and** sharing the postcode. The strongest evidence available |
+  | `spatial` | Within 200m, on surveyed coordinates |
+  | `spatial_centroid_only` | Within 200m, but the venue's coordinates are a postcode centroid and the postcodes disagree — the proximity is partly an artefact of where the centroid fell |
+  | `postcode` | Postcodes match at 200–1000m. This is what recovers venues published at a postcode centroid |
+  | `name` | Last resort: names agree at ≥ 0.8 within 500m, applied only where the other channels found nothing. `name_similarity` is set on these rows and null on every other |
+
+- **The multi-valued columns are arrays.** `oa_location_names`, `oa_dataset_urls`,
+  `oa_publisher_names`, `oa_postal_codes`, `oa_kinds` and `oa_location_json` are pipe-joined in the CSV
+  and split here. Any of them can be empty — a venue is a *cluster* of published points, and not every
+  point carries a name or a postcode. A name may contain newlines: some publishers put the whole
+  address in the field.
+- **`oa_location_json` is the key back to the data.** Each entry is one point's `location` JSON byte for
+  byte as published, so `WHERE TO_JSON_STRING(location) = '<value>'` against `opportunities` returns
+  that point's items. Nothing here re-serialises it.
+- **Some columns of the CSV are not served**: `region_code`, `region_name`, `management_type_group`,
+  `ap_facility_types`, `venue_id`, `oa_point_count`, `oa_dataset_count` and `is_primary_for_site`.
+  Regional and management-group figures are on the coverage endpoint, and the facility type codes have
+  no published lookup to resolve them against.
+- **Nothing is recomputed.** Every value is as published, and a blank cell becomes `null` or an empty
+  array — never a zero.
+- **Filters combine as they do across the API.** Values within one parameter are OR'd, different
+  parameters are AND'd. `publisher` matches when *any* of the row's publishers is any of the values.
+
+The row carries no `monitor_id`, `first_detected`, `days_open`, `consecutive_days`, `past_threshold`,
+`status` or `trend` — those fields are absent rather than null. It carries no `publisher_id` either:
+publisher identity elsewhere on this surface is a slug over a `feeds` row, whereas the names here come
+from the analysis job's own join and a row can hold several of them.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `site_id` | all | One or more Active Places site identifiers, matched exactly. Repeated (`?site_id=a&site_id=b`) or comma-separated (`?site_id=a,b`) |
+| `local_authority_code` | all | One or more ONS local authority codes, e.g. `E07000223`, matched ignoring case. Same two forms |
+| `publisher` | all | One or more publisher names, matched exactly against any of `oa_publisher_names`. Same two forms |
+| `match_method` | all | One or more match channels, matched ignoring case. Same two forms |
+
+```json
+{
+  "data": [
+    {
+      "site_id": "1042120",
+      "site_name": "1610 ROBERT BLAKE AND ELMWOOD LEISURE",
+      "postcode": "TA6 6AW",
+      "local_authority_code": "E06000066",
+      "local_authority_name": "Somerset",
+      "ownership_type_group": "Education",
+      "site_lat": 51.12057,
+      "site_lng": -3.005673,
+      "ap_facility_count": 6,
+      "oa_location_names": ["Robert Blake Science College"],
+      "oa_lat": 51.12039249506526,
+      "oa_lng": -3.005744989225123,
+      "oa_dataset_urls": [
+        "http://data.letsride.co.uk/",
+        "https://playwaze.com/opendata/openactive"
+      ],
+      "oa_publisher_names": ["British Cycling", "Playwaze"],
+      "oa_postal_codes": ["TA6 6AW"],
+      "oa_kinds": ["Event", "ScheduledSession", "SessionSeries"],
+      "oa_opportunity_count": 122,
+      "oa_location_json": [
+        "{\"latitude\":51.120354,\"longitude\":-3.005741}",
+        "{\"latitude\":51.120431,\"longitude\":-3.005749}"
+      ],
+      "distance_metres": 20.4,
+      "match_method": "spatial_and_postcode",
+      "name_similarity": null,
+      "spatial_match": true,
+      "postcode_match": true,
+      "is_primary_for_venue": true,
+      "is_mutual_best": true
+    },
+    {
+      "site_id": "1008333",
+      "site_name": "ABBEY MEADOWS OUTDOOR POOL",
+      "postcode": "OX14 3JD",
+      "local_authority_code": "E07000180",
+      "local_authority_name": "Vale of White Horse",
+      "ownership_type_group": "Local Authority",
+      "site_lat": 51.66989,
+      "site_lng": -1.276613,
+      "ap_facility_count": 1,
+      "oa_location_names": [
+        "Abbey Close Car Park\nAbingdon\nOX14 3NJ",
+        "Abbey Meadows\n1 Abbey Close\nAbingdon\nOX14 3NJ"
+      ],
+      "oa_lat": 51.6709389955123,
+      "oa_lng": -1.2738249879552628,
+      "oa_dataset_urls": ["https://data.bookwhen.com/"],
+      "oa_publisher_names": ["Bookwhen"],
+      "oa_postal_codes": [],
+      "oa_kinds": ["SessionSeries"],
+      "oa_opportunity_count": 2,
+      "oa_location_json": ["{\"latitude\":51.670939,\"longitude\":-1.273825}"],
+      "distance_metres": 225.4,
+      "match_method": "name",
+      "name_similarity": 0.8333333333333333,
+      "spatial_match": false,
+      "postcode_match": false,
+      "is_primary_for_venue": true,
+      "is_mutual_best": false
+    }
+  ],
+  "meta": {
+    "snapshot_date": "2026-09-17",
+    "generated_at": "2026-09-17T15:20:46Z",
+    "page": 1,
+    "page_size": 500,
+    "total": 10034
+  }
+}
+```
+
+### `GET /admin/active-places-coverage`
+
+The analysis's summary report, passed through in `data` exactly as generated. Takes no parameters.
+
+`headline.coverage_pct` is the figure to lead on. What the document carries:
+
+| Section | What it holds |
+|---|---|
+| `headline` | Sites in scope, matched, missing, coverage %, and the same read from the OpenActive side |
+| `source`, `parameters` | What was analysed, and the thresholds it was analysed with |
+| `channels` | What each match channel contributed, with per-method pair/site/venue counts and median distances |
+| `distance_sensitivity` | Coverage at 25m–1000m, with the buffer in use flagged |
+| `coverage_by_region`, `coverage_by_local_authority`, `coverage_by_ownership`, `coverage_by_management`, `coverage_by_facility_type` | The same four counts cut five ways |
+| `publishers` | Which publishers account for the coverage, by sites covered |
+| `coordinate_provenance` | How many OpenActive points sit exactly on a postcode centroid, overall and per publisher |
+| `unmatched` | The OpenActive side: venues matching no site, by district, by publisher, and the largest of them |
+| `data_quality` | What was excluded from the OpenActive side and why, plus clustering diagnostics |
+
+The rules worth knowing:
+
+- **`data` is passed through unmodelled.** The report is generated by the analysis job and carries its
+  own `schema_version`, so a section added upstream reaches the dashboard without a release here. Read
+  it defensively and check `schema_version` rather than assuming a key exists. Its keys are already
+  snake_case, like the rest of the API.
+- **`meta.generated_at` is the analysis's, not this response's.** This is the one endpoint on the
+  surface where those differ: it says when the report was computed. `meta.snapshot_date` is its
+  `run_date`.
+- **Read the headline as a lower bound.** Active Places records one point per *site* while OpenActive
+  records the point a *session* happens at, and about 31% of OpenActive points are postcode centroids
+  rather than surveyed coordinates. Both push genuine matches outside the 200m buffer — which is what
+  `distance_sensitivity` is there to show.
+- **A high "absent from Active Places" figure is not a data-quality problem.** Parks, halls, streets and
+  outdoor meeting points host OpenActive opportunities and are outside the Active Places remit by
+  construction.
+- **England only**, because Active Places is an England-only register. `data_quality` accounts for every
+  OpenActive point excluded on the way.
+- **A site is counted once per facility type it offers**, so `coverage_by_facility_type` sums to more
+  than the site total.
+
+```json
+{
+  "data": {
+    "schema_version": 1,
+    "generated_at": "2026-09-17T13:07:34+00:00",
+    "run_date": "2026-09-17",
+    "source": {
+      "opportunities_table": "openactive-monitor.openactive_analytics.opportunities",
+      "active_places_data_version": "2026-09-17 03:30:29",
+      "geography_scope": "England",
+      "excluded_kinds": ["Slot"]
+    },
+    "parameters": {
+      "buffer_metres": 200.0,
+      "postcode_max_metres": 1000.0,
+      "name_max_metres": 500.0,
+      "name_threshold": 0.8,
+      "venue_cluster_metres": 50.0
+    },
+    "headline": {
+      "coverage_pct": 26.4,
+      "sites_total": 27857,
+      "sites_matched": 7351,
+      "sites_missing": 20506,
+      "local_authorities": 296,
+      "venues_total": 16405,
+      "venues_matched": 7840,
+      "venues_unmatched": 8565,
+      "venues_unmatched_pct": 52.2,
+      "pairs": 10034
+    },
+    "channels": {
+      "sites_by_proximity": 6762,
+      "sites_added_by_postcode": 503,
+      "sites_added_by_name": 86,
+      "breakdown": [
+        {
+          "method": "spatial",
+          "pairs": 5236,
+          "sites": 4407,
+          "venues": 4243,
+          "median_distance_metres": 97.9
+        }
+      ]
+    },
+    "distance_sensitivity": [
+      { "threshold_metres": 200, "sites_matched": 6762, "coverage_pct": 24.3, "is_configured_buffer": true }
+    ],
+    "coverage_by_region": [
+      { "region_name": "South East", "sites_total": 5186, "sites_matched": 1263, "sites_missing": 3923, "coverage_pct": 24.4 }
+    ],
+    "publishers": [
+      { "publisher": "British Cycling", "ap_sites_covered": 2631, "oa_venues": 2493, "local_authorities": 279 }
+    ]
+  },
+  "meta": {
+    "snapshot_date": "2026-09-17",
+    "generated_at": "2026-09-17T13:07:34Z",
+    "page": 1,
+    "page_size": 1,
+    "total": 1
+  }
+}
+```
+
 ## Source data
+
+Everything below describes the BigQuery-backed endpoints. The two
+[Active Places](#active-places-coverage) endpoints read no table at all — they mirror two files
+published by the analysis job, as that section explains.
 
 The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
 `feeds` for descriptive fields and `feed_quality` for the score. The two stall monitors read exactly
@@ -1164,13 +1441,26 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~FeedQualitySummariserTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~AdminSlugTests"
+
+# the Active Places readers and filter — pure, and with no network either
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesMappingParserTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesCoverageReaderTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~ActivePlacesMappingFilterTests"
 ```
+
+The Active Places endpoint tests need the admin token and network access to wherever the `ActivePlaces`
+section points, but no BigQuery credentials — they read no table.
 
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
 `Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs`,
 `Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, and the
 summary arithmetic in `Services/Admin/MonitorSummaries.cs` and
-`Services/Admin/FeedQualityMonitor.cs`, all deliberately free of BigQuery and
+`Services/Admin/FeedQualityMonitor.cs`. The Active Places readers in
+`Services/Admin/ActivePlacesMonitor.cs` are split the same way, with every byte of network handling kept
+out in `Services/Admin/ActivePlacesSource.cs`. All of them are deliberately free of BigQuery and
 ASP.NET types, and pinned
 by deterministic unit tests against hand-written inputs. The
 endpoint tests then only have to check wiring, the envelope, and invariants that hold whatever the live

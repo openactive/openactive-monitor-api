@@ -1,10 +1,7 @@
 using MonitorApi;
+using MonitorApi.Services.Admin;
 using Scalar.AspNetCore;
 using System.Text.Json;
-
-// Time of day, UTC, at which every cached admin response is discarded — shortly after the overnight
-// ingestion pipeline has landed the new day's numbers.
-var adminCacheRefreshTime = new TimeOnly(7, 0);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +17,16 @@ builder.Services
 	.ValidateDataAnnotations()
 	.ValidateOnStart();
 
+builder.Services
+	.AddOptions<ActivePlacesOptions>()
+	.BindConfiguration(ActivePlacesOptions.SectionName);
+
+// The Active Places coverage endpoints mirror two files published by the analysis job rather than
+// querying BigQuery. The source is a singleton so its copy of those files is shared by every request,
+// and holds them until the same daily refresh the output cache expires on.
+builder.Services.AddHttpClient(ActivePlacesSource.HttpClientName);
+builder.Services.AddSingleton<ActivePlacesSource>();
+
 builder.Services.AddOutputCache(options =>
 {
 	options.SizeLimit = 100 * 1024 * 1024;       
@@ -29,7 +36,7 @@ builder.Services.AddOutputCache(options =>
 		.SetVaryByQuery("*"));
 	// The admin monitors describe one ingestion day, which only changes once the overnight pipeline has
 	// landed, so their responses are held until the next morning refresh rather than for a fixed span.
-	options.AddPolicy(DailyRefreshCachePolicy.PolicyName, new DailyRefreshCachePolicy(adminCacheRefreshTime));
+	options.AddPolicy(DailyRefreshCachePolicy.PolicyName, new DailyRefreshCachePolicy(DailyRefreshCachePolicy.AdminRefreshAt));
 });
 
 builder.Services.AddControllers()

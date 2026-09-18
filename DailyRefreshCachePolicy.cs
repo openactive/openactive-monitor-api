@@ -23,6 +23,18 @@ public sealed class DailyRefreshCachePolicy(TimeOnly refreshAt) : IOutputCachePo
 	/// <summary>Name this policy is registered under in <c>Program.cs</c>.</summary>
 	public const string PolicyName = "DailyRefresh";
 
+	/// <summary>
+	/// Time of day, UTC, the admin surface refreshes at — shortly after the overnight ingestion pipeline
+	/// has landed the new day's numbers.
+	/// </summary>
+	/// <remarks>
+	/// Held here rather than in <c>Program.cs</c> so that anything else caching a day's worth of admin
+	/// data expires on the same boundary as the responses built from it. <c>ActivePlacesSource</c> is the
+	/// one such thing: were its copy of the published report to expire on a different schedule, a caller
+	/// could be served page 2 of a newer report than page 1.
+	/// </remarks>
+	public static readonly TimeOnly AdminRefreshAt = new(7, 0);
+
 	private readonly TimeOnly refreshAt = refreshAt;
 
 	/// <summary>
@@ -30,7 +42,13 @@ public sealed class DailyRefreshCachePolicy(TimeOnly refreshAt) : IOutputCachePo
 	/// next occurrence of the refresh time. Exactly at the refresh time the entry gets the full day,
 	/// rather than expiring immediately.
 	/// </summary>
-	public TimeSpan TimeUntilRefresh(DateTime utcNow)
+	public TimeSpan TimeUntilRefresh(DateTime utcNow) => TimeUntilRefresh(utcNow, refreshAt);
+
+	/// <summary>
+	/// The same arithmetic against any refresh time, for callers that cache alongside this policy
+	/// rather than through it.
+	/// </summary>
+	public static TimeSpan TimeUntilRefresh(DateTime utcNow, TimeOnly refreshAt)
 	{
 		var next = utcNow.Date + refreshAt.ToTimeSpan();
 		if (next <= utcNow)

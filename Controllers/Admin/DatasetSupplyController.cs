@@ -88,7 +88,7 @@ public class DatasetSupplyController(IOptions<BigQueryOptions> bigQueryOptions, 
 	public async Task<ActionResult<AdminPage<DatasetFutureDeclineIncident>>> DatasetFutureDeclineIncidents(
 		int page = 1,
 		int page_size = DefaultPageSize,
-		int window_days = 10,
+		int window_days = 5,
 		int drop_percent = 10,
 		int qualify_window_days = 10,
 		int qualify_drop_percent = 10,
