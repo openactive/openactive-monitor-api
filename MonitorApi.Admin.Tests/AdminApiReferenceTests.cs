@@ -38,6 +38,7 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/dataset-future-decline-incidents", paths);
 		Assert.Contains("/admin/dataset-future-decline-trend", paths);
 		Assert.Contains("/admin/feed-quality", paths);
+		Assert.Contains("/admin/feed-custom-properties", paths);
 		Assert.Contains("/admin/active-places-site-mappings", paths);
 		Assert.Contains("/admin/active-places-coverage", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
@@ -57,6 +58,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	// Not a monitor: feed_quality is current state, so there is no as_of and no threshold to tune —
 	// only paging and the two identity filters.
 	[InlineData("/admin/feed-quality", "page,page_size,dataset_url,publisher")]
+	// Not a monitor either: custom_properties is a snapshot, so the same shape as feed-quality.
+	[InlineData("/admin/feed-custom-properties", "page,page_size,dataset_url,publisher")]
 	// Not a monitor and not from BigQuery: the analysis publishes one run at a time, so there is no
 	// as_of and no threshold to tune — only paging and the four identity filters.
 	[InlineData("/admin/active-places-site-mappings", "page,page_size,site_id,local_authority_code,publisher,match_method")]
@@ -215,6 +218,28 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("score_buckets", qualitySummary);
 		Assert.Contains("feeds_with_future_data", qualitySummary);
 		Assert.Contains("grade_breakdown", qualitySummary);
+
+		var customProperties = schemas.GetProperty("FeedCustomPropertiesRow").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("num_custom_properties", customProperties);
+		Assert.Contains("custom_properties", customProperties);
+		// Deliberately left out of the payload.
+		Assert.DoesNotContain("vocab_source", customProperties);
+		Assert.DoesNotContain("last_assessed", customProperties);
+		Assert.DoesNotContain("monitor_id", customProperties);
+
+		var customProperty = schemas.GetProperty("FeedCustomProperty").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Equal(["property", "namespace", "entity_type", "presence_pct"], customProperty);
+
+		var customPropertiesSummary = schemas.GetProperty("CustomPropertiesSummary").GetProperty("properties")
+			.EnumerateObject().Select(p => p.Name).ToList();
+
+		Assert.Contains("feeds_with_custom_properties", customPropertiesSummary);
+		Assert.Contains("distinct_custom_properties", customPropertiesSummary);
+		Assert.Contains("property_breakdown", customPropertiesSummary);
 
 		var completeness = schemas.GetProperty("FeedQualityAverage").GetProperty("properties")
 			.EnumerateObject().Select(p => p.Name).ToList();
