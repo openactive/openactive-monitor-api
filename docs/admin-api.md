@@ -27,6 +27,7 @@ http://localhost:5268/admin/dataset-orphaned-children-incidents?token=<AdminToke
 http://localhost:5268/admin/dataset-future-decline-incidents?token=<AdminToken>
 http://localhost:5268/admin/dataset-future-decline-trend?token=<AdminToken>
 http://localhost:5268/admin/feed-quality?token=<AdminToken>
+http://localhost:5268/admin/feed-custom-properties?token=<AdminToken>
 http://localhost:5268/admin/active-places-site-mappings?token=<AdminToken>
 http://localhost:5268/admin/active-places-coverage?token=<AdminToken>
 ```
@@ -71,8 +72,9 @@ Every admin endpoint returns the same envelope, so the dashboard can paginate an
 `/admin/summary` answers with a single object rather than a list, so its `data` is that object and its
 paging fields are fixed at `page: 1, page_size: 1, total: 1`. The `meta` keys are the same either way.
 
-[`/admin/feed-quality`](#get-adminfeed-quality) is the one endpoint with a **third key**, `summary`,
-carrying estate-wide figures next to the rows. `data` and `meta` are unchanged and paging works
+[`/admin/feed-quality`](#get-adminfeed-quality) and
+[`/admin/feed-custom-properties`](#get-adminfeed-custom-properties) carry a **third key**, `summary`,
+with estate-wide figures next to the rows. `data` and `meta` are unchanged and paging works
 identically; `summary` describes every row the filters matched rather than the page, so it does not
 move as the pages are walked.
 
@@ -1067,6 +1069,142 @@ Field notes on the summary:
 - `oldest_assessment` and `newest_assessment` bracket the `last_assessed` timestamps. They are equal
   whenever the assessor last ran over the whole table at once, which is the normal case.
 
+### `GET /admin/feed-custom-properties`
+
+Schema drift: every assessed feed in `custom_properties` that publishes at least one property outside
+the OpenActive vocabulary, most custom properties first, with the properties it uses and a `summary`
+of the whole set alongside them.
+
+One row per assessed feed, identified by **`(dataset_url, feed_id)`** — `feed_id` alone is not unique
+in this table. A publisher serving the same feeds under two dataset URLs is assessed once per dataset
+and appears twice (on 2026-09-29, Chelmsford City Sports' four feeds under both `leisurecloud.net` and
+`gs-signature.cloud`, with different counts under each).
+
+The rules worth knowing:
+
+- **Only feeds with custom properties are returned.** A feed is a row when `num_custom_properties > 0`.
+  Feeds with none, or with no count recorded, are left out of `data` and `meta.total` but still counted
+  in `summary.feeds_assessed`, so `summary.feed_share` is the fraction of the estate drifting.
+- **The response has a third key**, `summary`, exactly as on
+  [`/admin/feed-quality`](#get-adminfeed-quality): it describes every row the filters matched, not the
+  page, and is reduced from those same rows.
+- **`custom_properties` has one entry per (property, entity type)**, most widely present first. A
+  property used on both `SessionSeries` and `ScheduledSession` appears twice. `presence_pct` is the
+  percentage (0–100) of the sampled instances of that type carrying it — drawn from `sampled_items`
+  sampled opportunities, not the whole feed.
+- **`namespace` is `null` for unprefixed keys and full URIs.** `beta:formattedDescription` is in
+  `beta`; `bestRating` is in none.
+- **Property keys are compared exactly.** They are JSON keys, so `beta:foo` and `beta:Foo` are two
+  properties.
+- **Filters combine as they do across the API.** Values within one parameter are OR'd, different
+  parameters are AND'd. `publisher` matches the `publisher_name` stored with the assessment (unlike
+  `/admin/feed-quality`, which resolves it through `feeds`).
+- **Some source columns are deliberately not returned:** `vocab_source` and `last_assessed` at feed
+  level, and `property_kind`, `occurrences` and `entity_instances` inside `custom_properties`. They are
+  not read at all.
+
+Not a monitor: `custom_properties` is a snapshot, so there is no `as_of`, no trend endpoint, no tile on
+`/admin/summary`, and no incident fields on the row. `meta.snapshot_date` is `MAX(DATE(last_assessed))`
+across the table, as on `/admin/feed-quality`.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page` | `1` | One-based page number |
+| `page_size` | `500` | Rows per page, capped at 1000 |
+| `dataset_url` | all | One or more dataset URLs, matched exactly. Repeated (`?dataset_url=a&dataset_url=b`) or comma-separated (`?dataset_url=a,b`) |
+| `publisher` | all | One or more publisher names, matched exactly against the assessment's `publisher_name`. Same two forms |
+
+Arrays are truncated below; the response carries every entry.
+
+```json
+{
+  "data": [
+    {
+      "feed_id": "api-letsride-co-uk-public-v1-rides",
+      "feed_url": "http://api.letsride.co.uk/public/v1/rides",
+      "feed_type": "",
+      "is_regular": true,
+      "dataset_url": "http://data.letsride.co.uk/",
+      "dataset_name": "British Cycling Let's Ride Sessions",
+      "publisher_id": "pub_british-cycling",
+      "publisher_name": "British Cycling",
+      "sampled_items": 500,
+      "num_custom_properties": 18,
+      "num_custom_property_usages": 18,
+      "custom_properties": [
+        { "property": "bestRating", "namespace": null, "entity_type": "AggregateRating", "presence_pct": 100 },
+        { "property": "beta:attendeeCount", "namespace": "beta", "entity_type": "Event", "presence_pct": 100 },
+        { "property": "beta:distance", "namespace": "beta", "entity_type": "Event", "presence_pct": 100 }
+      ]
+    }
+  ],
+  "summary": {
+    "feeds_assessed": 397,
+    "datasets_assessed": 159,
+    "feeds_with_custom_properties": 161,
+    "datasets_with_custom_properties": 62,
+    "publishers_with_custom_properties": 61,
+    "feed_share": 0.4055,
+    "distinct_custom_properties": 57,
+    "total_custom_property_usages": 463,
+    "namespace_breakdown": [
+      { "namespace": "beta", "property_count": 25, "feed_count": 160, "dataset_count": 62 },
+      { "namespace": null, "property_count": 18, "feed_count": 29, "dataset_count": 26 },
+      { "namespace": "britishcycling", "property_count": 6, "feed_count": 1, "dataset_count": 1 }
+    ],
+    "entity_type_breakdown": [
+      { "entity_type": "Place", "property_count": 2, "feed_count": 58, "dataset_count": 28 },
+      { "entity_type": "Organization", "property_count": 6, "feed_count": 57, "dataset_count": 28 }
+    ],
+    "property_breakdown": [
+      {
+        "property": "beta:formattedDescription",
+        "namespace": "beta",
+        "entity_types": ["Course", "CourseInstance", "Event", "EventSeries", "FacilityUse", "Organization", "Place", "SessionSeries"],
+        "feed_count": 68,
+        "dataset_count": 34
+      },
+      {
+        "property": "beta:sportsActivityLocation",
+        "namespace": "beta",
+        "entity_types": ["Event", "ScheduledSession", "Slot"],
+        "feed_count": 57,
+        "dataset_count": 32
+      }
+    ]
+  },
+  "meta": {
+    "snapshot_date": "2026-09-29",
+    "generated_at": "2026-09-30T08:17:31Z",
+    "page": 1,
+    "page_size": 500,
+    "total": 161
+  }
+}
+```
+
+Field notes:
+
+- `publisher_id`, `dataset_name` and `publisher_name` follow the same derivations as
+  `/admin/feed-quality`, but from the names stored in `custom_properties` itself.
+- `feed_type` is passed through as stored; some feeds carry `""` rather than `null`.
+- `num_custom_property_usages` is the number of `(entity type, property)` pairs — the length of
+  `custom_properties` — and is at least `num_custom_properties`.
+- Rows are ordered by `num_custom_properties` descending, then `dataset_url`, then `feed_id`, which is
+  total. Within a row, `custom_properties` is ordered by `presence_pct` descending, then `property`,
+  then `entity_type`.
+- In the summary, every figure but `feeds_assessed` and `datasets_assessed` describes the returned
+  rows only; `feeds_with_custom_properties` always equals `meta.total`. Feed counts in the breakdowns
+  count `(dataset_url, feed_id)` pairs.
+- `total_custom_property_usages` sums the rows' `num_custom_property_usages`.
+- `namespace_breakdown` groups unprefixed keys and full URIs under `namespace: null`; its
+  `property_count` values sum to `distinct_custom_properties`. `entity_type_breakdown` labels a missing
+  type `unknown`. A property found on several types counts towards each, so those do not sum.
+- `property_breakdown` lists every distinct property, most feeds first then alphabetically — the
+  candidates for adoption into the vocabulary.
+- Every breakdown is ordered by `feed_count` descending, then its value ascending (a `null` namespace
+  after named ones on a tie).
+
 ## Active Places coverage
 
 How much of Sport England's [Active Places](https://www.activeplacespower.com/) register of the built
@@ -1398,6 +1536,13 @@ column and no history of any kind. Consequences:
   the whole filtered set and reduces the summary from it in C# rather than running a second aggregate
   query. Every other monitor aggregates in SQL because its source table is orders of magnitude larger.
 - The completeness columns are stored as **percentages, 0–100**, not fractions.
+
+`custom_properties` is the fourth current-state table, read by `/admin/feed-custom-properties`: one
+row per assessed `(dataset_url, feed_id)` — `feed_id` alone repeats where a publisher serves the same
+feeds under two dataset URLs — with the custom properties in a `REPEATED RECORD`. It dates itself
+from `last_assessed` as `feed_quality` does, carries its own `publisher_name` so no join to `feeds`
+is needed, and is small (397 rows on 2026-09-29), so the endpoint loads every assessed feed and
+decides which to report in C#.
 
 **`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
 2026-08-20 duplicated. Consequences worth remembering when reading the numbers:

@@ -23,6 +23,7 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/dataset-future-decline-incidents",
 		"/admin/dataset-future-decline-trend",
 		"/admin/feed-quality",
+		"/admin/feed-custom-properties",
 		"/admin/active-places-site-mappings",
 		"/admin/active-places-coverage",
 	];
