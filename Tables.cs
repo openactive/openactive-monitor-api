@@ -11,4 +11,5 @@ internal static class Tables
 	public const string OpportunityIngestion = "opportunity_ingestion";
 	public const string FeedIngestion = "feed_ingestion";
 	public const string CustomProperties = "custom_properties";
+	public const string PublisherNotifications = "publisher_notifications";
 }
