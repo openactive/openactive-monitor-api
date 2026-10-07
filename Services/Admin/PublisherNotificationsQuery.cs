@@ -102,6 +102,23 @@ internal static class PublisherNotificationsQuery
        WHERE id = @id
        """;
 
+    /// <summary> Values for UpdateSql's parameters. </summary>
+    public static BigQueryParameter[] UpdateParameters(
+        string id,
+        string? status,
+        string? stakeholder,
+        string? contact,
+        DateOnly? dateContacted,
+        string? notes) =>
+    [
+        new("id", BigQueryDbType.String, id),
+        new("status", BigQueryDbType.String, status),
+        new("stakeholder", BigQueryDbType.String, stakeholder),
+        new("contact", BigQueryDbType.String, contact),
+        new("date_contacted", BigQueryDbType.Date, dateContacted?.ToDateTime(TimeOnly.MinValue)),
+        new("notes", BigQueryDbType.String, notes),
+    ];
+
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.
     /// </summary>
