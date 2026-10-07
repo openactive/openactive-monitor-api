@@ -89,6 +89,19 @@ internal static class PublisherNotificationsQuery
         new("problems", BigQueryDbType.String, problemsJson ?? "null"),
     ];
 
+    /// <summary> Update steward fields on one row. </summary>
+    public static string UpdateSql(string table) =>
+       $"""
+       UPDATE {table}
+       SET status = @status,
+            stakeholder = @stakeholder,
+            contact = @contact,
+            date_contacted = @date_contacted,
+            notes = @notes,
+            updated_at = CURRENT_TIMESTAMP()
+       WHERE id = @id
+       """;
+
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.
     /// </summary>
