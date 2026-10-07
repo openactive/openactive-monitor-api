@@ -2,6 +2,7 @@ using System.Collections;
 using MonitorApi.Models;
 using MonitorApi.Models.Admin;
 namespace MonitorApi.Services.Admin;
+using Google.Cloud.BigQuery.V2;
 
 /// <summary>SQL for the publisher notification list. Table names are passed in already fully qualified.</summary>
 internal static class PublisherNotificationsQuery
@@ -44,6 +45,49 @@ internal static class PublisherNotificationsQuery
               ) AS alerts
        FROM {table}
        """;
+
+    /// <summary> Insert one notification row. Timestamps come from BigQuery. </summary>
+    public static string InsertSql(string table) =>
+       $"""
+       INSERT INTO {table} (
+         id, publisher_id, publisher_name, problem_count, monitors,
+         oldest_days_open, status, stakeholder, contact, date_contacted,
+         notes, problems, created_at, updated_at
+       ) VALUES (
+         @id, @publisher_id, @publisher_name, @problem_count, @monitors,
+         @oldest_days_open, @status, @stakeholder, @contact, @date_contacted,
+         @notes, PARSE_JSON(@problems), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+       )
+       """;
+
+    // <summary> Values for InsertSql's @parameters. </summary>
+    public static BigQueryParameter[] InsertParameters(
+        string id,
+        string? publisherId,
+        string? publisherName,
+        long? problemCount,
+        IReadOnlyList<string> monitors,
+        long? oldestDaysOpen,
+        string? status,
+        string? stakeholder,
+        string? contact,
+        DateOnly? dateContacted,
+        string? notes,
+        string? problemsJson) =>
+    [
+        new("id", BigQueryDbType.String, id),
+        new("publisher_id", BigQueryDbType.String, publisherId),
+        new("publisher_name", BigQueryDbType.String, publisherName),
+        new("problem_count", BigQueryDbType.Int64, problemCount),
+        new("monitors", BigQueryDbType.Array, monitors.ToList()) { ArrayElementType = BigQueryDbType.String},
+        new("oldest_days_open", BigQueryDbType.Int64, oldestDaysOpen),
+        new("status", BigQueryDbType.String, status),
+        new("stakeholder", BigQueryDbType.String, stakeholder),
+        new("contact", BigQueryDbType.String, contact),
+        new("date_contacted", BigQueryDbType.Date, dateContacted?.ToDateTime(TimeOnly.MinValue)),
+        new("notes", BigQueryDbType.String, notes),
+        new("problems", BigQueryDbType.String, problemsJson ?? "null"),
+    ];
 
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.
