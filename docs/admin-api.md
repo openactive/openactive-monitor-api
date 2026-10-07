@@ -30,6 +30,8 @@ http://localhost:5268/admin/feed-quality?token=<AdminToken>
 http://localhost:5268/admin/feed-custom-properties?token=<AdminToken>
 http://localhost:5268/admin/active-places-site-mappings?token=<AdminToken>
 http://localhost:5268/admin/active-places-coverage?token=<AdminToken>
+http://localhost:5268/admin/publisher-notifications?token=<AdminToken>
+http://localhost:5268/admin/publisher-notifications/summary?token=<AdminToken>
 ```
 
 ## API reference
@@ -80,7 +82,7 @@ move as the pages are walked.
 
 ## Caching
 
-Admin responses are held in the output cache until **07:00 UTC**, then discarded, whatever time of day
+Admin responses are held in the output cache until **07:00 UTC** (except publisher-notifications), then discarded, whatever time of day
 they were stored. The monitors describe one ingestion day at a time and those numbers do not move again
 until the overnight pipeline has landed, so a fixed sliding window would either serve yesterday's
 figures past the refresh or re-scan the ingestion history for nothing.
@@ -88,6 +90,8 @@ figures past the refresh or re-scan the ingestion history for nothing.
 Entries vary by the full query string, so changing any parameter (including the token) is a separate
 entry. Only `200` responses are cached — a `403` from a bad token is not. **When checking a change by
 hand, expect the previous body**: restart the app, or vary a parameter, to force a fresh query.
+**Exception:** `/admin/publisher-notifications` (list, summary, create, update) is not
+cached — stewards need writes to show up immediately.
 
 ## Endpoints
 
@@ -1475,6 +1479,33 @@ The rules worth knowing:
   }
 }
 ```
+
+## Publisher notifications
+
+Steward work list of publishers that need contacting. Rows live in BigQuery
+`publisher_notifications`. v1 uses dummy data; live monitor scanning comes later.
+These routes are **not** output-cached.
+
+Statuses: `open`, `in_progress`, `closed`.
+
+### `GET /admin/publisher-notifications`
+
+Paged list of notification rows. Query params: `page`, `page_size` (same as other admin lists).
+
+### `GET /admin/publisher-notifications/summary`
+
+Counts for the whole table: `publishers`, `open`, `in_progress`, `closed`,
+`never_contacted`, `alerts`.
+
+### `POST /admin/publisher-notifications`
+
+Create a row. Body fields match the list row (including `id`, `monitors`, optional `problems` JSON).
+Returns `201` with the created row in `{ data, meta }`.
+
+### `PATCH /admin/publisher-notifications/{id}`
+
+Update steward fields only: `status`, `stakeholder`, `contact`, `date_contacted`, `notes`.
+Does not rewrite `problems` / `monitors`. Returns `404` if the id is missing.
 
 ## Source data
 
