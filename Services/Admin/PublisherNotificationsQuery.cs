@@ -1,8 +1,9 @@
 using System.Collections;
+using Google.Cloud.BigQuery.V2;
 using MonitorApi.Models;
 using MonitorApi.Models.Admin;
+
 namespace MonitorApi.Services.Admin;
-using Google.Cloud.BigQuery.V2;
 
 /// <summary>SQL for the publisher notification list. Table names are passed in already fully qualified.</summary>
 internal static class PublisherNotificationsQuery
@@ -25,6 +26,16 @@ internal static class PublisherNotificationsQuery
                updated_at
         FROM {table}
         ORDER BY oldest_days_open DESC NULLS LAST, publisher_name
+        """;
+
+    /// <summary> Fetch one row by id. </summary>
+    public static string GetByIdSql(string table) =>
+        $"""
+        SELECT id, publisher_id, publisher_name, problem_count, monitors,
+               oldest_days_open, status, stakeholder, contact, date_contacted,
+               notes, problems, created_at, updated_at
+        FROM {table}
+        WHERE id = @id
         """;
 
     /// <summary> Status counts and alert totals for the summary endpoint. </summary>
