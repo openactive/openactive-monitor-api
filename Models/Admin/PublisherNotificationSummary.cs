@@ -1,6 +1,6 @@
 namespace MonitorApi.Models.Admin;
 
-// <summary>Counts for the whole publisher notification list</summary>
+/// <summary>Counts for the whole publisher notification list</summary>
 public sealed class PublisherNotificationSummary
 {
     public required int Publishers { get; init; }

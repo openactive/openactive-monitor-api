@@ -26,6 +26,39 @@ internal static class PublisherNotificationsQuery
         ORDER BY oldest_days_open DESC NULLS LAST, publisher_name
         """;
 
+    /// <summary> Status counts and alert totals for the summary endpoint. </summary>
+    public static string SummarySql(string table) =>
+       $"""
+       SELECT COUNT(*) AS publishers,
+              COUNTIF(status = 'open') AS open,
+              COUNTIF(status = 'in_progress') AS in_progress,
+              COUNTIF(status = 'closed') AS closed,
+              COUNTIF(date_contacted IS NULL) AS never_contacted,
+              COUNTIF(
+                status IN ('open', 'in_progress')
+                AND (
+                  date_contacted IS NULL
+                  OR date_contacted < DATE_SUB(CURRENT_DATE(), INTERVAL 5 DAY)
+                  OR IFNULL(oldest_days_open, 0) >= 5
+                )
+              ) AS alerts
+       FROM {table}
+       """;
+
+    /// <summary>
+    /// Reads the single summary row. Missing row or NULL columns become zero.
+    /// </summary>
+    public static PublisherNotificationSummary ParseSummary(Dictionary<string, object>? row) =>
+        new()
+        {
+            Publishers = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("publishers")) ?? 0),
+            Open = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("open")) ?? 0),
+            InProgress = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("in_progress")) ?? 0),
+            Closed = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("closed")) ?? 0),
+            NeverContacted = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("never_contacted")) ?? 0),
+            Alerts = (int)(BigQueryValueParser.AsLong(row?.GetValueOrDefault("alerts")) ?? 0),
+        };
+
     /// <summary>
     /// Turns one BigQuery row dictionary into the wire model.
     /// <c>id</c> is required; every other column is nullable and may be absent when NULL.
@@ -81,7 +114,7 @@ internal static class PublisherNotificationsQuery
         DateOnly day => day,
         not null when value.ToString() is { Length: > 0 } text &&
             DateOnly.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
-            _=> null,
+        _ => null,
     };
 
     private static DateTime? ParseTimestamp(object? value) =>
