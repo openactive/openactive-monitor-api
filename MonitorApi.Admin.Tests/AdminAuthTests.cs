@@ -26,6 +26,8 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/feed-custom-properties",
 		"/admin/active-places-site-mappings",
 		"/admin/active-places-coverage",
+		"/admin/publisher-notifications",
+		"/admin/publisher-notifications/summary",
 	];
 
 	[Theory]
