@@ -82,4 +82,42 @@ public class PublisherNotificationsController(
         var snapshotDate = DateOnly.FromDateTime(DateTime.UtcNow);
         return StatusCode(StatusCodes.Status201Created, Document(parsed, snapshotDate));
     }
+
+    /// <summary>Update a publisher notification row.</summary>
+    [HttpPatch("publisher-notifications/{id}")]
+    [ProducesResponseType(typeof(AdminDocument<PublisherNotificationRow>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AdminDocument<PublisherNotificationRow>>> Update(
+        string id,
+        [FromBody] PublisherNotificationUpdate body)
+    {
+        var table = Fq(Tables.PublisherNotifications);
+
+        var existing = await QuerySingle(
+            PublisherNotificationsQuery.GetByIdSql(table),
+            new Google.Cloud.BigQuery.V2.BigQueryParameter("id", Google.Cloud.BigQuery.V2.BigQueryDbType.String, id));
+
+        if (existing is null)
+        {
+            return NotFound(new { message = "Publisher notification not found" });
+        }
+
+        await QuerySingle(
+            PublisherNotificationsQuery.UpdateSql(table),
+            PublisherNotificationsQuery.UpdateParameters(
+                id,
+                body.Status,
+                body.Stakeholder,
+                body.Contact,
+                body.DateContacted,
+                body.Notes));
+
+        var row = await QuerySingle(
+            PublisherNotificationsQuery.GetByIdSql(table),
+            new Google.Cloud.BigQuery.V2.BigQueryParameter("id", Google.Cloud.BigQuery.V2.BigQueryDbType.String, id));
+
+        var parsed = PublisherNotificationsQuery.ParseRow(row!);
+        var snapshotDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        return Ok(Document(parsed, snapshotDate));
+    }
 }
