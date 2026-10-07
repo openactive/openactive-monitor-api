@@ -42,12 +42,48 @@ internal static class PublisherNotificationsQuery
             Stakeholder = row.GetValueOrDefault("stakeholder") as string,
             Contact = row.GetValueOrDefault("contact") as string,
             Notes = row.GetValueOrDefault("notes") as string,
-            Monitors = [],
-            Problems = null,
-            DateContacted = null,
-            CreatedAt = null,
-            UpdatedAt = null,
-
-
+            Monitors = ParseMonitors(row.GetValueOrDefault("monitors")),
+            Problems = BigQueryValueParser.ParseJson(row.GetValueOrDefault("problems")),
+            DateContacted = ParseDate(row.GetValueOrDefault("date_contacted")),
+            CreatedAt = ParseTimestamp(row.GetValueOrDefault("created_at")),
+            UpdatedAt = ParseTimestamp(row.GetValueOrDefault("updated_at")),
         };
+
+    /// <summary>
+    /// BigQuery REPEATED STRING arrives as a sequence of strings.
+    /// Missing or unexpected shapes become an empty list, never null.
+    /// </summary>
+    private static IReadOnlyList<string> ParseMonitors(object? cell)
+    {
+        if (cell is null)
+            return [];
+
+        if (cell is string single)
+            return [single];
+
+        if (cell is not IEnumerable items)
+            return [];
+
+        var monitors = new List<string>();
+        foreach (var item in items)
+        {
+            if (item is string s && s.Length > 0)
+                monitors.Add(s);
+            else if (item?.ToString() is { Length: > 0 } text)
+                monitors.Add(text);
+        }
+        return monitors;
+    }
+
+    private static DateOnly? ParseDate(object? value) => value switch
+    {
+        DateTime dateTime => DateOnly.FromDateTime(dateTime),
+        DateOnly day => day,
+        not null when value.ToString() is { Length: > 0 } text &&
+            DateOnly.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _=> null,
+    };
+
+    private static DateTime? ParseTimestamp(object? value) =>
+    value is DateTime dt ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : null;
 }
