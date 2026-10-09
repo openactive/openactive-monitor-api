@@ -41,6 +41,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/feed-custom-properties", paths);
 		Assert.Contains("/admin/active-places-site-mappings", paths);
 		Assert.Contains("/admin/active-places-coverage", paths);
+		Assert.Contains("/admin/publisher-notifications", paths);
+		Assert.Contains("/admin/publisher-notifications/summary", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -63,6 +65,7 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	// Not a monitor and not from BigQuery: the analysis publishes one run at a time, so there is no
 	// as_of and no threshold to tune — only paging and the four identity filters.
 	[InlineData("/admin/active-places-site-mappings", "page,page_size,site_id,local_authority_code,publisher,match_method")]
+	[InlineData("/admin/publisher-notifications", "page,page_size")]
 	public async Task AdminDocument_DocumentsTheQueryParametersWithTheirDefaults(string path, string expected)
 	{
 		using var client = _fixture.CreateClient();
