@@ -38,6 +38,17 @@ internal static class PublisherNotificationsQuery
         WHERE id = @id
         """;
 
+	/// <summary>Delete one row by id.</summary>
+	public static string DeleteSql(string table) =>
+		$"""
+		DELETE FROM {table}
+		WHERE id = @id
+		""";
+
+	/// <summary>Values for GetByIdSql / DeleteSql.</summary>
+	public static BigQueryParameter IdParameter(string id) =>
+		new("id", BigQueryDbType.String, id);
+
     /// <summary> Status counts and alert totals for the summary endpoint. </summary>
     public static string SummarySql(string table) =>
        $"""

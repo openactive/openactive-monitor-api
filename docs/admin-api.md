@@ -90,7 +90,7 @@ figures past the refresh or re-scan the ingestion history for nothing.
 Entries vary by the full query string, so changing any parameter (including the token) is a separate
 entry. Only `200` responses are cached — a `403` from a bad token is not. **When checking a change by
 hand, expect the previous body**: restart the app, or vary a parameter, to force a fresh query.
-**Exception:** `/admin/publisher-notifications` (list, summary, create, update) is not
+**Exception:** `/admin/publisher-notifications` (list, summary, create, update, delete) is not
 cached — stewards need writes to show up immediately.
 
 ## Endpoints
@@ -1507,6 +1507,10 @@ Returns `201` with the created row in `{ data, meta }`.
 Update writable fields on a row (publisher details, monitors, problems, status, contact, notes, etc.).
 Id comes from the URL. `created_at` is not changed; `updated_at` is set by BigQuery.
 The UI can send only the fields it edits; the API accepts a full body. Returns `404` if the id is missing.
+
+### `DELETE /admin/publisher-notifications/{id}`
+
+Remove a row. Returns `204` when deleted, `404` if the id is missing.
 
 ## Source data
 

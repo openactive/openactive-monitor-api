@@ -37,6 +37,7 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/publisher-notifications/summary`: status/alert counts for that list
 - `POST /admin/publisher-notifications`: create a row
 - `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
+- `DELETE /admin/publisher-notifications/{id}`: delete a row
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.

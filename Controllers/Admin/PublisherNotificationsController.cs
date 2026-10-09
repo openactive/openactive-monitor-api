@@ -1,4 +1,3 @@
-using Google.Cloud.BigQuery.V2;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.Extensions.Options;
@@ -62,7 +61,7 @@ public class PublisherNotificationsController(
 
 		var row = await QuerySingle(
 			PublisherNotificationsQuery.GetByIdSql(table),
-			new BigQueryParameter("id", BigQueryDbType.String, body.Id));
+			PublisherNotificationsQuery.IdParameter(body.Id));
 
 		var parsed = PublisherNotificationsQuery.ParseRow(row!);
 		var snapshotDate = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -81,7 +80,7 @@ public class PublisherNotificationsController(
 
 		var existing = await QuerySingle(
 			PublisherNotificationsQuery.GetByIdSql(table),
-			new BigQueryParameter("id", BigQueryDbType.String, id));
+			PublisherNotificationsQuery.IdParameter(id));
 
 		if (existing is null)
 		{
@@ -94,10 +93,32 @@ public class PublisherNotificationsController(
 
 		var row = await QuerySingle(
 			PublisherNotificationsQuery.GetByIdSql(table),
-			new BigQueryParameter("id", BigQueryDbType.String, id));
+			PublisherNotificationsQuery.IdParameter(id));
 
 		var parsed = PublisherNotificationsQuery.ParseRow(row!);
 		var snapshotDate = DateOnly.FromDateTime(DateTime.UtcNow);
 		return Ok(Document(parsed, snapshotDate));
+	}
+
+	/// <summary>Delete a publisher notification row.</summary>
+	[HttpDelete("publisher-notifications/{id}")]
+	[ProducesResponseType(StatusCodes.Status204NoContent)]
+	[ProducesResponseType(StatusCodes.Status404NotFound)]
+	public async Task<IActionResult> Delete(string id)
+	{
+		var table = Fq(Tables.PublisherNotifications);
+		var idParam = PublisherNotificationsQuery.IdParameter(id);
+
+		var existing = await QuerySingle(
+			PublisherNotificationsQuery.GetByIdSql(table),
+			idParam);
+
+		if (existing is null)
+		{
+			return NotFound(new { message = "Publisher notification not found." });
+		}
+
+		await QuerySingle(PublisherNotificationsQuery.DeleteSql(table), idParam);
+		return NoContent();
 	}
 }
