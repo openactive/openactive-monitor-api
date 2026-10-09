@@ -1504,8 +1504,9 @@ Returns `201` with the created row in `{ data, meta }`.
 
 ### `PATCH /admin/publisher-notifications/{id}`
 
-Update steward fields only: `status`, `stakeholder`, `contact`, `date_contacted`, `notes`.
-Does not rewrite `problems` / `monitors`. Returns `404` if the id is missing.
+Update writable fields on a row (publisher details, monitors, problems, status, contact, notes, etc.).
+Id comes from the URL. `created_at` is not changed; `updated_at` is set by BigQuery.
+The UI can send only the fields it edits; the API accepts a full body. Returns `404` if the id is missing.
 
 ## Source data
 

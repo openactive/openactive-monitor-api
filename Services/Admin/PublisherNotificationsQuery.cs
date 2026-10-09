@@ -71,64 +71,48 @@ internal static class PublisherNotificationsQuery
        )
        """;
 
-    // <summary> Values for InsertSql's @parameters. </summary>
-    public static BigQueryParameter[] InsertParameters(
-        string id,
-        string? publisherId,
-        string? publisherName,
-        long? problemCount,
-        IReadOnlyList<string> monitors,
-        long? oldestDaysOpen,
-        string? status,
-        string? stakeholder,
-        string? contact,
-        DateOnly? dateContacted,
-        string? notes,
-        string? problemsJson) =>
-    [
-        new("id", BigQueryDbType.String, id),
-        new("publisher_id", BigQueryDbType.String, publisherId),
-        new("publisher_name", BigQueryDbType.String, publisherName),
-        new("problem_count", BigQueryDbType.Int64, problemCount),
-        new("monitors", BigQueryDbType.Array, monitors.ToList()) { ArrayElementType = BigQueryDbType.String},
-        new("oldest_days_open", BigQueryDbType.Int64, oldestDaysOpen),
-        new("status", BigQueryDbType.String, status),
-        new("stakeholder", BigQueryDbType.String, stakeholder),
-        new("contact", BigQueryDbType.String, contact),
-        new("date_contacted", BigQueryDbType.Date, dateContacted?.ToDateTime(TimeOnly.MinValue)),
-        new("notes", BigQueryDbType.String, notes),
-        new("problems", BigQueryDbType.String, problemsJson ?? "null"),
-    ];
+	/// <summary>Values for InsertSql's @parameters.</summary>
+	public static BigQueryParameter[] InsertParameters(PublisherNotificationBody body) =>
+		WriteParameters(body.Id, body);
 
-    /// <summary> Update steward fields on one row. </summary>
-    public static string UpdateSql(string table) =>
-       $"""
-       UPDATE {table}
-       SET status = @status,
-            stakeholder = @stakeholder,
-            contact = @contact,
-            date_contacted = @date_contacted,
-            notes = @notes,
-            updated_at = CURRENT_TIMESTAMP()
-       WHERE id = @id
-       """;
+	/// <summary>Update all writable columns on one row. Id comes from the URL; created_at is left alone.</summary>
+	public static string UpdateSql(string table) =>
+		$"""
+		UPDATE {table}
+		SET publisher_id = @publisher_id,
+		    publisher_name = @publisher_name,
+		    problem_count = @problem_count,
+		    monitors = @monitors,
+		    oldest_days_open = @oldest_days_open,
+		    status = @status,
+		    stakeholder = @stakeholder,
+		    contact = @contact,
+		    date_contacted = @date_contacted,
+		    notes = @notes,
+		    problems = PARSE_JSON(@problems),
+		    updated_at = CURRENT_TIMESTAMP()
+		WHERE id = @id
+		""";
 
-    /// <summary> Values for UpdateSql's parameters. </summary>
-    public static BigQueryParameter[] UpdateParameters(
-        string id,
-        string? status,
-        string? stakeholder,
-        string? contact,
-        DateOnly? dateContacted,
-        string? notes) =>
-    [
-        new("id", BigQueryDbType.String, id),
-        new("status", BigQueryDbType.String, status),
-        new("stakeholder", BigQueryDbType.String, stakeholder),
-        new("contact", BigQueryDbType.String, contact),
-        new("date_contacted", BigQueryDbType.Date, dateContacted?.ToDateTime(TimeOnly.MinValue)),
-        new("notes", BigQueryDbType.String, notes),
-    ];
+	/// <summary>Values for UpdateSql's @parameters. <paramref name="id"/> is the route id.</summary>
+	public static BigQueryParameter[] UpdateParameters(string id, PublisherNotificationBody body) =>
+		WriteParameters(id, body);
+
+	private static BigQueryParameter[] WriteParameters(string id, PublisherNotificationBody body) =>
+	[
+		new("id", BigQueryDbType.String, id),
+		new("publisher_id", BigQueryDbType.String, body.PublisherId),
+		new("publisher_name", BigQueryDbType.String, body.PublisherName),
+		new("problem_count", BigQueryDbType.Int64, body.ProblemCount),
+		new("monitors", BigQueryDbType.Array, body.Monitors.ToList()) { ArrayElementType = BigQueryDbType.String },
+		new("oldest_days_open", BigQueryDbType.Int64, body.OldestDaysOpen),
+		new("status", BigQueryDbType.String, body.Status),
+		new("stakeholder", BigQueryDbType.String, body.Stakeholder),
+		new("contact", BigQueryDbType.String, body.Contact),
+		new("date_contacted", BigQueryDbType.Date, body.DateContacted?.ToDateTime(TimeOnly.MinValue)),
+		new("notes", BigQueryDbType.String, body.Notes),
+		new("problems", BigQueryDbType.String, body.Problems?.GetRawText() ?? "null"),
+	];
 
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.

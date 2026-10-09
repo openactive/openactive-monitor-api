@@ -2,21 +2,26 @@ using System.Text.Json;
 
 namespace MonitorApi.Models.Admin;
 
-/// <summary> One publisher on the notification list. </summary>
-public sealed class PublisherNotificationRow
+/// <summary>Writable fields for a publisher notification (create/update body).</summary>
+public class PublisherNotificationBody
 {
-    public required string Id { get; init; }
-    public required string? PublisherId { get; init; }
-    public required string? PublisherName { get; init; }
-    public required long? ProblemCount { get; init; }
-    public required IReadOnlyList<string> Monitors { get; init; }
-    public required long? OldestDaysOpen { get; init; }
-    public required string? Status { get; init; }
-    public required string? Stakeholder { get; init; }
-    public required string? Contact { get; init; }
-    public required DateOnly? DateContacted { get; init; }
-    public required string? Notes { get; init; }
-    public required JsonElement? Problems { get; init; }
-    public required DateTime? CreatedAt { get; init; }
-    public required DateTime? UpdatedAt { get; init; }
+	public required string Id { get; init; }
+	public string? PublisherId { get; init; }
+	public string? PublisherName { get; init; }
+	public long? ProblemCount { get; init; }
+	public IReadOnlyList<string> Monitors { get; init; } = [];
+	public long? OldestDaysOpen { get; init; }
+	public string? Status { get; init; }
+	public string? Stakeholder { get; init; }
+	public string? Contact { get; init; }
+	public DateOnly? DateContacted { get; init; }
+	public string? Notes { get; init; }
+	public JsonElement? Problems { get; init; }
+}
+
+/// <summary>One publisher on the notification list (API response).</summary>
+public sealed class PublisherNotificationRow : PublisherNotificationBody
+{
+	public DateTime? CreatedAt { get; init; }
+	public DateTime? UpdatedAt { get; init; }
 }
