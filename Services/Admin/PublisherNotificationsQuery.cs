@@ -56,7 +56,7 @@ internal static class PublisherNotificationsQuery
               COUNTIF(status = 'open') AS open,
               COUNTIF(status = 'in_progress') AS in_progress,
               COUNTIF(status = 'closed') AS closed,
-              COUNTIF(date_contacted IS NULL) AS never_contacted,
+              COUNTIF(date_contacted IS NULL AND status IN ('open', 'in_progress')) AS never_contacted,
               COUNTIF(
                 status IN ('open', 'in_progress')
                 AND (
