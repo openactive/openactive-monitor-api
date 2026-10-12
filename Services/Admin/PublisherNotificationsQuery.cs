@@ -38,18 +38,18 @@ internal static class PublisherNotificationsQuery
         WHERE id = @id
         """;
 
-	/// <summary>Delete one row by id.</summary>
-	public static string DeleteSql(string table) =>
-		$"""
+    /// <summary>Delete one row by id.</summary>
+    public static string DeleteSql(string table) =>
+        $"""
 		DELETE FROM {table}
 		WHERE id = @id
 		""";
 
-	/// <summary>Values for GetByIdSql / DeleteSql.</summary>
-	public static BigQueryParameter IdParameter(string id) =>
-		new("id", BigQueryDbType.String, id);
+    /// <summary>Values for GetByIdSql / DeleteSql.</summary>
+    public static BigQueryParameter IdParameter(string id) =>
+        new("id", BigQueryDbType.String, id);
 
-    /// <summary> Status counts and alert totals for the summary endpoint. </summary>
+    /// <summary>Status counts and alert totals (Slack thresholds on problems[], plus contact follow-up).</summary>
     public static string SummarySql(string table) =>
        $"""
        SELECT COUNT(*) AS publishers,
@@ -62,7 +62,24 @@ internal static class PublisherNotificationsQuery
                 AND (
                   date_contacted IS NULL
                   OR date_contacted < DATE_SUB(CURRENT_DATE(), INTERVAL 5 DAY)
-                  OR IFNULL(oldest_days_open, 0) >= 5
+                  OR EXISTS (
+                    SELECT 1
+                    FROM UNNEST(IF(problems IS NULL, [], JSON_QUERY_ARRAY(problems))) AS problem
+                    WHERE
+                      (
+                        JSON_VALUE(problem, '$.monitor_id') = 'dataset_stall'
+                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 5
+                      )
+                      OR (
+                        JSON_VALUE(problem, '$.monitor_id') = 'single_feed_stall'
+                        AND JSON_VALUE(problem, '$.feed_type') IN ('Slot', 'ScheduledSession')
+                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
+                      )
+                      OR (
+                        JSON_VALUE(problem, '$.monitor_id') = 'feed_ingestion_error'
+                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
+                      )
+                  )
                 )
               ) AS alerts
        FROM {table}
@@ -82,13 +99,13 @@ internal static class PublisherNotificationsQuery
        )
        """;
 
-	/// <summary>Values for InsertSql's @parameters.</summary>
-	public static BigQueryParameter[] InsertParameters(PublisherNotificationBody body) =>
-		WriteParameters(body.Id, body);
+    /// <summary>Values for InsertSql's @parameters.</summary>
+    public static BigQueryParameter[] InsertParameters(PublisherNotificationBody body) =>
+        WriteParameters(body.Id, body);
 
-	/// <summary>Update all writable columns on one row. Id comes from the URL; created_at is left alone.</summary>
-	public static string UpdateSql(string table) =>
-		$"""
+    /// <summary>Update all writable columns on one row. Id comes from the URL; created_at is left alone.</summary>
+    public static string UpdateSql(string table) =>
+        $"""
 		UPDATE {table}
 		SET publisher_id = @publisher_id,
 		    publisher_name = @publisher_name,
@@ -105,25 +122,25 @@ internal static class PublisherNotificationsQuery
 		WHERE id = @id
 		""";
 
-	/// <summary>Values for UpdateSql's @parameters. <paramref name="id"/> is the route id.</summary>
-	public static BigQueryParameter[] UpdateParameters(string id, PublisherNotificationBody body) =>
-		WriteParameters(id, body);
+    /// <summary>Values for UpdateSql's @parameters. <paramref name="id"/> is the route id.</summary>
+    public static BigQueryParameter[] UpdateParameters(string id, PublisherNotificationBody body) =>
+        WriteParameters(id, body);
 
-	private static BigQueryParameter[] WriteParameters(string id, PublisherNotificationBody body) =>
-	[
-		new("id", BigQueryDbType.String, id),
-		new("publisher_id", BigQueryDbType.String, body.PublisherId),
-		new("publisher_name", BigQueryDbType.String, body.PublisherName),
-		new("problem_count", BigQueryDbType.Int64, body.ProblemCount),
-		new("monitors", BigQueryDbType.Array, body.Monitors.ToList()) { ArrayElementType = BigQueryDbType.String },
-		new("oldest_days_open", BigQueryDbType.Int64, body.OldestDaysOpen),
-		new("status", BigQueryDbType.String, body.Status),
-		new("stakeholder", BigQueryDbType.String, body.Stakeholder),
-		new("contact", BigQueryDbType.String, body.Contact),
-		new("date_contacted", BigQueryDbType.Date, body.DateContacted?.ToDateTime(TimeOnly.MinValue)),
-		new("notes", BigQueryDbType.String, body.Notes),
-		new("problems", BigQueryDbType.String, body.Problems?.GetRawText() ?? "null"),
-	];
+    private static BigQueryParameter[] WriteParameters(string id, PublisherNotificationBody body) =>
+    [
+        new("id", BigQueryDbType.String, id),
+        new("publisher_id", BigQueryDbType.String, body.PublisherId),
+        new("publisher_name", BigQueryDbType.String, body.PublisherName),
+        new("problem_count", BigQueryDbType.Int64, body.ProblemCount),
+        new("monitors", BigQueryDbType.Array, body.Monitors.ToList()) { ArrayElementType = BigQueryDbType.String },
+        new("oldest_days_open", BigQueryDbType.Int64, body.OldestDaysOpen),
+        new("status", BigQueryDbType.String, body.Status),
+        new("stakeholder", BigQueryDbType.String, body.Stakeholder),
+        new("contact", BigQueryDbType.String, body.Contact),
+        new("date_contacted", BigQueryDbType.Date, body.DateContacted?.ToDateTime(TimeOnly.MinValue)),
+        new("notes", BigQueryDbType.String, body.Notes),
+        new("problems", BigQueryDbType.String, body.Problems?.GetRawText() ?? "null"),
+    ];
 
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.
