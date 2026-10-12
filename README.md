@@ -33,6 +33,11 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/feed-custom-properties`: schema drift — every feed publishing custom (non-vocabulary) properties from `custom_properties`, plus an estate-wide summary (optional dataset_url/publisher filters)
 - `GET /admin/active-places-site-mappings`: every Active Places site the OpenActive data reaches, paired with the venue that reaches it (optional site_id/local_authority_code/publisher/match_method filters)
 - `GET /admin/active-places-coverage`: the Active Places coverage report — headline coverage, breakdowns by area, ownership and publisher, and the unmatched OpenActive venues
+- `GET /admin/publisher-notifications`: steward work list of publishers (BigQuery-backed; not cached)
+- `GET /admin/publisher-notifications/summary`: status/alert counts for that list
+- `POST /admin/publisher-notifications`: create a row
+- `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
+- `DELETE /admin/publisher-notifications/{id}`: delete a row
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.
