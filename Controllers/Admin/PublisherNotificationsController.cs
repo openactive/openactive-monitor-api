@@ -68,13 +68,18 @@ public class PublisherNotificationsController(
 		return StatusCode(StatusCodes.Status201Created, Document(parsed, snapshotDate));
 	}
 
-	/// <summary>Update a publisher notification row. Id comes from the URL.</summary>
+	 /// <summary>Partially update a publisher notification row.</summary>
+    /// <remarks>
+    /// Only the fields sent are changed; a field that is missing or null keeps its current value, so a
+    /// steward can change the status without re-sending the problems list. The id comes from the URL.
+    /// A field cannot be cleared back to empty through this endpoint.
+    /// </remarks>
 	[HttpPatch("publisher-notifications/{id}")]
 	[ProducesResponseType(typeof(AdminDocument<PublisherNotificationRow>), StatusCodes.Status200OK)]
 	[ProducesResponseType(StatusCodes.Status404NotFound)]
 	public async Task<ActionResult<AdminDocument<PublisherNotificationRow>>> Update(
 		string id,
-		[FromBody] PublisherNotificationBody body)
+		[FromBody] PublisherNotificationPatch body)
 	{
 		var table = Fq(Tables.PublisherNotifications);
 

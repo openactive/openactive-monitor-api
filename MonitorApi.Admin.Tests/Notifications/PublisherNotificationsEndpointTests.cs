@@ -99,9 +99,8 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 			var list = await listResponse.Content.ReadFromJsonAsync<AdminPage<PublisherNotificationRow>>(JsonOptions);
 			Assert.Contains(list!.Data, row => row.Id == id);
 
-			var updateBody = new PublisherNotificationBody
+			var updateBody = new PublisherNotificationPatch
 			{
-				Id = id,
 				PublisherId = createBody.PublisherId,
 				PublisherName = createBody.PublisherName,
 				ProblemCount = 2,
@@ -142,8 +141,67 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 
 		var updateMissing = await client.PatchAsJsonAsync(
 			_fixture.WithAdminToken($"{ListRoute}/{id}"),
-			new PublisherNotificationBody { Id = id, Status = "closed" },
+			new PublisherNotificationPatch { Status = "closed" },
 			JsonOptions);
 		Assert.Equal(HttpStatusCode.NotFound, updateMissing.StatusCode);
+	}
+
+	[Fact]
+	public async Task Patch_OnlyChangesFieldsSent()
+	{
+		var id = $"pn_test-{Guid.NewGuid():N}";
+		using var client = _fixture.CreateClient();
+
+		try
+		{
+			var createBody = new PublisherNotificationBody
+			{
+				Id = id,
+				PublisherId = "pub_test-dummy",
+				PublisherName = "Test Dummy Publisher",
+				ProblemCount = 1,
+				Monitors = ["single_feed_stall"],
+				OldestDaysOpen = 3,
+				Status = "open",
+				Stakeholder = "Test Steward",
+				Contact = "dummy.publisher@example.org",
+				Notes = "keep me",
+				Problems = JsonDocument.Parse("""[{"monitor_id":"single_feed_stall","days_open":3}]""").RootElement,
+			};
+
+			var createResponse = await client.PostAsJsonAsync(
+				_fixture.WithAdminToken(ListRoute), createBody, JsonOptions);
+			Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+			// Send only the status.
+			var patchResponse = await client.PatchAsJsonAsync(
+				_fixture.WithAdminToken($"{ListRoute}/{id}"),
+				new PublisherNotificationPatch { Status = "closed" },
+				JsonOptions);
+			Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+
+			var patched = await patchResponse.Content
+				.ReadFromJsonAsync<AdminDocument<PublisherNotificationRow>>(JsonOptions);
+			Assert.NotNull(patched);
+
+			// The field sent changed
+			Assert.Equal("closed", patched.Data.Status);
+
+			//.. and every field not sent keeps its value.
+			Assert.Equal("Test Dummy Publisher", patched.Data.PublisherName);
+			Assert.Equal(1, patched.Data.ProblemCount);
+			Assert.Equal(["single_feed_stall"], patched.Data.Monitors);
+			Assert.Equal(3, patched.Data.OldestDaysOpen);
+			Assert.Equal("Test Steward", patched.Data.Stakeholder);
+			Assert.Equal("dummy.publisher@example.org", patched.Data.Contact);
+			Assert.Equal("keep me", patched.Data.Notes);
+			Assert.NotNull(patched.Data.Problems);
+			Assert.Equal(JsonValueKind.Array, patched.Data.Problems.Value.ValueKind);
+			Assert.Equal(1, patched.Data.Problems.Value.GetArrayLength());
+		}
+		finally
+		{
+			await client.DeleteAsync(_fixture.WithAdminToken($"{ListRoute}/{id}"));
+		}
 	}
 }
