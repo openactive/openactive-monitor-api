@@ -205,6 +205,7 @@ public class DatasetStallsController(IOptions<BigQueryOptions> bigQueryOptions, 
 						FeedId = feed.FeedId,
 						FeedName = (feeds.GetValueOrDefault(feed.FeedId)
 							?? new FeedMetadata(feed.FeedId, null, null, null, null)).FeedName,
+						FeedType = feeds.GetValueOrDefault(feed.FeedId)?.FeedType,
 						LastPublished = feed.LastPublished,
 						ConsecutiveDays = feed.ConsecutiveDays,
 					})

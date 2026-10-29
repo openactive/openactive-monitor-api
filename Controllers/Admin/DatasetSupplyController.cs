@@ -266,6 +266,7 @@ public class DatasetSupplyController(IOptions<BigQueryOptions> bigQueryOptions, 
 						FeedId = feed.FeedId,
 						FeedName = (feeds.GetValueOrDefault(feed.FeedId)
 							?? new FeedMetadata(feed.FeedId, null, null, null, null)).FeedName,
+						FeedType = feeds.GetValueOrDefault(feed.FeedId)?.FeedType,
 						Reason = feed.Reason,
 						StartFuture = feed.StartFuture,
 						CurrentFuture = feed.CurrentFuture,

@@ -65,7 +65,13 @@ public class FeedErrorsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var errors = FeedIngestionErrorDetector.Detect(histories, snapshotDate.Value, thresholds);
 
 		var metadata = await LoadFeedMetadata(errors.Select(e => e.FeedId).ToList());
-		var incidents = errors.Select(error => ToIncident(error, metadata.GetValueOrDefault(error.FeedId))).ToList();
+		var datasets = await LoadDatasetMetadata(errors.Select(e => e.DatasetId).Distinct().ToList());
+		var incidents = errors
+			.Select(error => ToIncident(
+				error,
+				metadata.GetValueOrDefault(error.FeedId),
+				datasets.GetValueOrDefault(error.DatasetId)))
+			.ToList();
 
 		return Ok(Paginate(incidents, page, page_size, snapshotDate.Value));
 	}
@@ -152,11 +158,16 @@ public class FeedErrorsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// <summary>
 	/// Hydrates a detected error into the dashboard payload. <paramref name="metadata"/> is null when the
 	/// feed appears in the ingestion table but has no <c>feeds</c> row; the incident is still reported,
-	/// with the descriptive fields left empty.
+	/// with the descriptive fields left empty. <paramref name="dataset"/> is null in the same case for
+	/// the dataset, whose name then falls back to the URL's host.
 	/// </summary>
-	private static IngestionErrorIncident ToIncident(FeedIngestionError error, FeedMetadata? metadata)
+	private static IngestionErrorIncident ToIncident(
+		FeedIngestionError error,
+		FeedMetadata? metadata,
+		DatasetMetadata? dataset)
 	{
 		var feed = metadata ?? new FeedMetadata(error.FeedId, null, null, null, null);
+		var owner = dataset ?? new DatasetMetadata(error.DatasetId, null, null);
 
 		return new IngestionErrorIncident
 		{
@@ -167,6 +178,8 @@ public class FeedErrorsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			FeedName = feed.FeedName,
 			FeedType = feed.FeedType,
 			FeedUrl = feed.FeedUrl,
+			DatasetUrl = error.DatasetId,
+			DatasetName = owner.Name,
 			// The day after the last completed ingestion: the first day the feed can be shown to have
 			// been failing.
 			FirstDetected = error.LastCompleted.AddDays(1),

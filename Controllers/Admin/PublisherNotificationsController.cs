@@ -47,13 +47,32 @@ public class PublisherNotificationsController(
 		return Ok(Document(summary, snapshotDate));
 	}
 
-	/// <summary>Create a publisher notification row.</summary>
+	/// <summary>
+	/// Create a publisher notification row. The id is supplied by the caller and must be new: a row
+	/// that already has it answers 409 and nothing is written.
+	/// </summary>
+	/// <remarks>
+	/// The table has no primary key, so without this check a retried POST would insert a second row
+	/// with the same id, which every later PATCH and DELETE would then hit together. The check and the
+	/// insert are two statements, so two concurrent POSTs of one id can still both succeed; the daily
+	/// notification job is the only creator and runs alone.
+	/// </remarks>
 	[HttpPost("publisher-notifications")]
 	[ProducesResponseType(typeof(AdminDocument<PublisherNotificationRow>), StatusCodes.Status201Created)]
+	[ProducesResponseType(StatusCodes.Status409Conflict)]
 	public async Task<ActionResult<AdminDocument<PublisherNotificationRow>>> Create(
 		[FromBody] PublisherNotificationBody body)
 	{
 		var table = Fq(Tables.PublisherNotifications);
+
+		var existing = await QuerySingle(
+			PublisherNotificationsQuery.GetByIdSql(table),
+			PublisherNotificationsQuery.IdParameter(body.Id));
+
+		if (existing is not null)
+		{
+			return Conflict(new { message = "A publisher notification with this id already exists." });
+		}
 
 		await QuerySingle(
 			PublisherNotificationsQuery.InsertSql(table),

@@ -21,6 +21,19 @@ public sealed class StallIncident
 
 	public required string? FeedUrl { get; init; }
 
+	/// <summary>
+	/// The dataset the feed belongs to, matching <c>feeds.dataset_url</c> — the same identifier the
+	/// dataset-scoped monitors report as their <c>dataset_url</c>, so a feed incident can be joined to
+	/// them exactly.
+	/// </summary>
+	public required string DatasetUrl { get; init; }
+
+	/// <summary>
+	/// Display name for the dataset: its <c>feed_quality.dataset_name</c>, falling back to the host of
+	/// <see cref="DatasetUrl"/>. Never empty.
+	/// </summary>
+	public required string DatasetName { get; init; }
+
 	/// <summary>The day the feed went quiet — its last publishing day.</summary>
 	public required DateOnly FirstDetected { get; init; }
 

@@ -94,6 +94,13 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 			Assert.NotNull(created.Data.CreatedAt);
 			Assert.NotNull(created.Data.UpdatedAt);
 
+			// The table has no primary key, so the controller enforces the id's uniqueness itself.
+			var duplicateResponse = await client.PostAsJsonAsync(
+				_fixture.WithAdminToken(ListRoute),
+				createBody,
+				JsonOptions);
+			Assert.Equal(HttpStatusCode.Conflict, duplicateResponse.StatusCode);
+
 			var listResponse = await client.GetAsync(_fixture.WithAdminToken(ListRoute));
 			Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
 			var list = await listResponse.Content.ReadFromJsonAsync<AdminPage<PublisherNotificationRow>>(JsonOptions);
