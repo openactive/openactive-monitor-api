@@ -122,4 +122,25 @@ public class IdPatternCheckTests
     }
 
     #endregion
+
+
+	#region Parent kinds
+
+	[Theory]
+	[InlineData("Slot", "FacilityUse")]
+	[InlineData("ScheduledSession", "SessionSeries")]
+	[InlineData("scheduledsession", "SessionSeries")]
+	public void ParentKindFor_MapsEachMonitoredChildKind(string childKind, string expected)
+	{
+		Assert.Equal(expected, IdPatternCheck.ParentKindFor(childKind));
+	}
+
+	[Fact]
+	public void ParentKindFor_IsNullForAKindThatIsNotAChild()
+	{
+		// A parent kind is not itself a monitored child, so it maps to nothing.
+		Assert.Null(IdPatternCheck.ParentKindFor("FacilityUse"));
+	}
+
+	#endregion
 }
