@@ -5,7 +5,7 @@ namespace MonitorApi.Services.Admin;
 /// the feed metadata the decision tree's kind filters need.
 /// </summary>
 /// <remarks>
-/// Orphan and future-decline inputs arrive with the rows that use them.
+/// Future-decline inputs arrive with the row that uses them.
 /// </remarks>
 public sealed record ActionRouterInputs
 {
@@ -18,6 +18,15 @@ public sealed record ActionRouterInputs
 	public IReadOnlyList<DatasetStall> DatasetStalls { get; init; } = [];
 
 	public IReadOnlyList<SingleFeedStall> SingleFeedStalls { get; init; } = [];
+
+
+	/// <summary>Datasets publishing children whose parent is missing from the same dataset.</summary>
+	public IReadOnlyList<OrphanedChildren> Orphans { get; init; } = [];
+
+	/// <summary>
+	/// A sample of the parent ids each dataset publishes, for the id-format pre-check on the orphan row.
+	/// </summary>
+	public IReadOnlyList<ParentIdSample> ParentIdSamples { get; init; } = [];
 
 	/// <summary>
 	/// Feed id to <c>feeds.type</c>, for the rows the tree limits to Slot and ScheduledSession feeds.
@@ -61,7 +70,7 @@ public static class ActionRouter
 	public static IReadOnlyList<MonitorAction> Route(ActionRouterInputs inputs, ActionTriggers? triggers = null)
 	{
 		var thresholds = triggers ?? new ActionTriggers();
-		var actions = new List<MonitorAction>();
+		var actions = new ActionList();
 
 		foreach (var failure in inputs.HttpFailures)
 		{
@@ -141,14 +150,47 @@ public static class ActionRouter
 			});
 		}
 
-		// Total order: ties are common — a dataset's feeds fail together on the same day — and without
-		// the last two tiebreaks two pages of one result set could overlap or drop a row.
-		return actions
-			.OrderBy(a => Priority(a.Kind))
-			.ThenByDescending(a => a.ConsecutiveDays ?? 0)
-			.ThenBy(a => a.DatasetUrl, StringComparer.Ordinal)
-			.ThenBy(a => a.FeedId ?? string.Empty, StringComparer.Ordinal)
-			.ToList();
+		// Keyed by dataset and parent kind so each child kind is compared against the right parents.
+		var parentSamples = inputs.ParentIdSamples.ToLookup(s => (s.DatasetUrl, s.Kind));
+
+		foreach (var orphan in inputs.Orphans)
+		{
+			if (orphan.OrphanShare < thresholds.OrphanShare)
+			{
+				continue;
+			}
+
+			// Matched by dataset url, not by feed: an orphan incident has no feed_id — it is counted
+			// across the whole dataset — so "is this already explained?" can only be asked at dataset
+			// level. Only a triggered action suppresses, because only a triggered action means the
+			// publisher is already being contacted about the cause.
+			if (actions.FirstFor(orphan.DatasetUrl, OrphanPreChecks) is { } explained)
+			{
+				actions.Suppress(explained, MonitorActionKind.OrphanedChildren);
+				continue;
+			}
+
+			var mismatches = IdPatternMismatches(orphan, parentSamples);
+			var changedIds = mismatches.Count > 0;
+
+			actions.Add(new MonitorAction
+			{
+				Kind = changedIds ? MonitorActionKind.IdPatternMismatch : MonitorActionKind.OrphanedChildren,
+				DatasetUrl = orphan.DatasetUrl,
+				// No FirstDetected: opportunities holds current state only, so there is no day the
+				// problem started.
+				Share = orphan.OrphanShare,
+				Suppressed = changedIds
+					? [new SuppressedIncident(
+						MonitorActionKind.OrphanedChildren,
+						null,
+						SuppressionReasons.SupersededBy(MonitorActionKind.IdPatternMismatch))]
+					: [],
+				Incident = changedIds ? new IdPatternIncident(orphan, mismatches) : orphan,
+			});
+		}
+
+		return actions.Build();
 	}
 
 	/// <summary>
@@ -159,4 +201,105 @@ public static class ActionRouter
 	/// </summary>
 	private static bool IsSessionKind(string feedId, ActionRouterInputs inputs, ActionTriggers triggers) =>
 		inputs.FeedKinds.TryGetValue(feedId, out var kind) && triggers.SessionKinds.Contains(kind);
+
+
+	/// <summary>
+	/// Problems that explain orphaned children, in the order the tree checks them. Dataset stalls are
+	/// deliberately absent: the tree does not list them for this row.
+	/// </summary>
+	private static readonly string[] OrphanPreChecks =
+	[
+		MonitorActionKind.HttpEndpointFailure,
+		MonitorActionKind.AuthenticationRequired,
+		MonitorActionKind.SingleFeedStall,
+	];
+
+	/// <summary>
+	/// Child kinds whose missing parents are in a different id format from the parents the dataset
+	/// publishes. Empty when the formats agree, and empty when there is nothing to compare — no parent
+	/// sample is no evidence, and an unevidenced id change must not be put to a publisher.
+	/// </summary>
+	private static IReadOnlyList<KindIdPatternMismatch> IdPatternMismatches(
+		OrphanedChildren orphan,
+		ILookup<(string DatasetUrl, string Kind), ParentIdSample> parentSamples)
+	{
+		var mismatches = new List<KindIdPatternMismatch>();
+
+		foreach (var kind in orphan.ByKind)
+		{
+			// Slots are compared against FacilityUses, ScheduledSessions against SessionSeries. A kind
+			// with no parent mapping is not one this check knows how to read.
+			if (IdPatternCheck.ParentKindFor(kind.Kind) is not { } parentKind)
+			{
+				continue;
+			}
+
+			var mismatch = IdPatternCheck.Compare(
+				kind.MissingParents.Select(p => p.MissingId),
+				parentSamples[(orphan.DatasetUrl, parentKind)].SelectMany(s => s.SampleIds));
+
+			if (mismatch is not null)
+			{
+				mismatches.Add(new KindIdPatternMismatch(kind.Kind, mismatch));
+			}
+		}
+
+		return mismatches;
+	}
+
+	/// <summary>
+	/// Actions under construction. <see cref="MonitorAction"/> is immutable, but a pre-check only
+	/// discovers what an action superseded after that action has been built, so the suppression lists
+	/// are gathered alongside and folded in once, at <see cref="Build"/>.
+	/// </summary>
+	private sealed class ActionList
+	{
+		private readonly List<MonitorAction> actions = [];
+		private readonly List<List<SuppressedIncident>> suppressed = [];
+
+		public void Add(MonitorAction action)
+		{
+			actions.Add(action);
+			suppressed.Add([]);
+		}
+
+		/// <summary>
+		/// Index of the first action for <paramref name="datasetUrl"/> whose kind is in
+		/// <paramref name="kinds"/>, tried in the order given; <c>null</c> when there is none.
+		/// </summary>
+		public int? FirstFor(string datasetUrl, IReadOnlyList<string> kinds)
+		{
+			foreach (var kind in kinds)
+			{
+				var index = actions.FindIndex(a =>
+					a.Kind == kind && string.Equals(a.DatasetUrl, datasetUrl, StringComparison.Ordinal));
+
+				if (index >= 0)
+				{
+					return index;
+				}
+			}
+
+			return null;
+		}
+
+		/// <summary>Records an incident the action at <paramref name="index"/> was reported instead of.</summary>
+		public void Suppress(int index, string kind, string? feedId = null) =>
+			suppressed[index].Add(new SuppressedIncident(
+				kind, feedId, SuppressionReasons.SupersededBy(actions[index].Kind)));
+
+		/// <summary>
+		/// The finished list, worst first. The order is total: ties are common — a dataset's feeds fail
+		/// together on the same day — and without the last two tiebreaks two pages of one result set
+		/// could overlap or drop a row.
+		/// </summary>
+		public IReadOnlyList<MonitorAction> Build() =>
+			actions
+				.Select((action, i) => suppressed[i].Count == 0 ? action : action with { Suppressed = suppressed[i] })
+				.OrderBy(a => Priority(a.Kind))
+				.ThenByDescending(a => a.ConsecutiveDays ?? 0)
+				.ThenBy(a => a.DatasetUrl, StringComparer.Ordinal)
+				.ThenBy(a => a.FeedId ?? string.Empty, StringComparer.Ordinal)
+				.ToList();
+	}
 }

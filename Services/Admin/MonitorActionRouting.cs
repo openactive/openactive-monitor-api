@@ -118,3 +118,16 @@ public sealed record MonitorAction
     /// </summary>
     public required object Incident { get; init; }
 }
+
+/// <summary>One child kind's missing parents, compared against the parents its dataset publishes.</summary>
+/// <param name="Kind">The child kind: <c>Slot</c> or <c>ScheduledSession</c>.</param>
+/// <param name="Mismatch">The id shapes on each side, with examples.</param>
+public sealed record KindIdPatternMismatch(string Kind, IdPatternMismatch Mismatch);
+
+/// <summary>
+/// An orphan incident the tree routed to "ID-space change" instead: the dataset's children point at
+/// parents in a format it no longer publishes.
+/// </summary>
+public sealed record IdPatternIncident(
+	OrphanedChildren Orphans,
+	IReadOnlyList<KindIdPatternMismatch> ByKind);

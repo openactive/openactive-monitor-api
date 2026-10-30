@@ -1,4 +1,5 @@
 using MonitorApi.Services.Admin;
+using static MonitorApi.Admin.Tests.Actions.RouterFixtures;
 
 namespace MonitorApi.Admin.Tests.Actions;
 
@@ -7,57 +8,6 @@ namespace MonitorApi.Admin.Tests.Actions;
 /// </summary>
 public class ActionRouterAvailabilityTests
 {
-	private static readonly DateOnly AsOf = new(2026, 9, 9);
-
-	#region Builders
-
-	private static FeedIngestionError HttpFailure(string feedId, int days, string dataset = "d1") => new()
-	{
-		FeedId = feedId,
-		DatasetId = dataset,
-		LastCompleted = AsOf.AddDays(-days),
-		ConsecutiveDays = days,
-		PastThreshold = false,
-		ErrorCode = "500",
-		ErrorMessage = "HTTP 500",
-		Trend = [],
-	};
-
-	private static AuthRequired AuthFailure(string feedId, int days, string dataset = "d1") => new()
-	{
-		FeedId = feedId,
-		DatasetId = dataset,
-		FirstFailed = AsOf.AddDays(-(days - 1)),
-		ConsecutiveDays = days,
-		ErrorCode = "403",
-		ErrorMessage = "HTTP 403",
-	};
-
-	private static DatasetStall WholeDatasetStall(int days, string dataset = "d1") => new()
-	{
-		DatasetId = dataset,
-		LastPublished = AsOf.AddDays(-days),
-		ConsecutiveDays = days,
-		PastThreshold = false,
-		Feeds = [],
-		Trend = [],
-	};
-
-	private static SingleFeedStall FeedStall(string feedId, int days, string dataset = "d1") => new()
-	{
-		FeedId = feedId,
-		DatasetId = dataset,
-		LastPublished = AsOf.AddDays(-days),
-		ConsecutiveDays = days,
-		PastThreshold = false,
-		Trend = [],
-	};
-
-	private static Dictionary<string, string> Kinds(params (string FeedId, string Kind)[] feeds) =>
-		feeds.ToDictionary(f => f.FeedId, f => f.Kind, StringComparer.Ordinal);
-
-	#endregion
-
 	#region HTTP endpoint failures
 
 	[Fact]
