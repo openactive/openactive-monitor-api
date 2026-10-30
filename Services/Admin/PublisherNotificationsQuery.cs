@@ -103,28 +103,45 @@ internal static class PublisherNotificationsQuery
     public static BigQueryParameter[] InsertParameters(PublisherNotificationBody body) =>
         WriteParameters(body.Id, body);
 
-    /// <summary>Update all writable columns on one row. Id comes from the URL; created_at is left alone.</summary>
+     /// <summary>
+    /// Partial update of one row. A NULL parameter keeps the column's current value, so a caller only
+    /// changes what it sends. Id comes from the URL; created_at is never touched.
+    /// </summary>
     public static string UpdateSql(string table) =>
         $"""
-		UPDATE {table}
-		SET publisher_id = @publisher_id,
-		    publisher_name = @publisher_name,
-		    problem_count = @problem_count,
-		    monitors = @monitors,
-		    oldest_days_open = @oldest_days_open,
-		    status = @status,
-		    stakeholder = @stakeholder,
-		    contact = @contact,
-		    date_contacted = @date_contacted,
-		    notes = @notes,
-		    problems = PARSE_JSON(@problems),
-		    updated_at = CURRENT_TIMESTAMP()
-		WHERE id = @id
-		""";
+        UPDATE {table}
+        SET publisher_id = COALESCE(@publisher_id, publisher_id),
+            publisher_name = COALESCE(@publisher_name, publisher_name),
+            problem_count = COALESCE(@problem_count, problem_count),
+            monitors = IF(@set_monitors, @monitors, monitors),
+            oldest_days_open = COALESCE(@oldest_days_open, oldest_days_open),
+            status = COALESCE(@status, status),
+            stakeholder = COALESCE(@stakeholder, stakeholder),
+            contact = COALESCE(@contact, contact),
+            date_contacted = COALESCE(@date_contacted, date_contacted),
+            notes = COALESCE(@notes, notes),
+            problems = COALESCE(PARSE_JSON(@problems), problems),
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE id = @id
+        """;
 
-    /// <summary>Values for UpdateSql's @parameters. <paramref name="id"/> is the route id.</summary>
-    public static BigQueryParameter[] UpdateParameters(string id, PublisherNotificationBody body) =>
-        WriteParameters(id, body);
+    /// <summary>Values for UpdateSql's @parameters. A null field becomes a NULL parameter, meaning "keep".</summary>
+    public static BigQueryParameter[] UpdateParameters(string id, PublisherNotificationPatch patch) =>
+    [
+        new("id", BigQueryDbType.String, id),
+        new("publisher_id", BigQueryDbType.String, patch.PublisherId),
+        new("publisher_name", BigQueryDbType.String, patch.PublisherName),
+        new("problem_count", BigQueryDbType.Int64, patch.ProblemCount),
+        new("set_monitors", BigQueryDbType.Bool, patch.Monitors is not null),
+        new("monitors", BigQueryDbType.Array, (patch.Monitors ?? []).ToList()) { ArrayElementType = BigQueryDbType.String },
+        new("oldest_days_open", BigQueryDbType.Int64, patch.OldestDaysOpen),
+        new("status", BigQueryDbType.String, patch.Status),
+        new("stakeholder", BigQueryDbType.String, patch.Stakeholder),
+        new("contact", BigQueryDbType.String, patch.Contact),
+        new("date_contacted", BigQueryDbType.Date, patch.DateContacted?.ToDateTime(TimeOnly.MinValue)),
+        new("notes", BigQueryDbType.String, patch.Notes),
+        new("problems", BigQueryDbType.String, patch.Problems?.GetRawText()),
+    ];
 
     private static BigQueryParameter[] WriteParameters(string id, PublisherNotificationBody body) =>
     [

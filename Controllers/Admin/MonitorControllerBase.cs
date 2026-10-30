@@ -190,4 +190,28 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 
 		return await rows.Select(OrphanedChildrenQuery.ParseOrphanCounts).ToListAsync();
 	}
+
+
+	/// <summary>
+	/// Loads a sample of the parent ids a specific set of datasets publishes, for the id-format
+	/// pre-check on the decision tree's orphaned-children row.
+	/// </summary>
+	/// <remarks>
+	/// Bounded to the datasets that actually raised an orphan incident, like
+	/// <see cref="LoadDatasetMetadata"/>, and skipped entirely when none did. The other side of the
+	/// comparison needs no query: it arrives on the incident as its missing parents.
+	/// </remarks>
+	protected async Task<List<ParentIdSample>> LoadParentIdSamples(IReadOnlyCollection<string> datasetUrls)
+	{
+		if (datasetUrls.Count == 0)
+		{
+			return [];
+		}
+
+		var rows = await Query(
+			ParentIdSampleQuery.ParentIdSampleSql(Fq(Tables.Opportunities)),
+			ParentIdSampleQuery.ParentIdSampleParameters(datasetUrls));
+
+		return await rows.Select(ParentIdSampleQuery.ParseParentIdSample).ToListAsync();
+	}
 }
