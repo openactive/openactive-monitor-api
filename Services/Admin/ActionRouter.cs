@@ -4,9 +4,6 @@ namespace MonitorApi.Services.Admin;
 /// Everything the router decides on for one snapshot day: the incidents each monitor detected, plus
 /// the feed metadata the decision tree's kind filters need.
 /// </summary>
-/// <remarks>
-/// Future-decline inputs arrive with the row that uses them.
-/// </remarks>
 public sealed record ActionRouterInputs
 {
 	/// <summary>Feeds failing with a non-auth HTTP code.</summary>
@@ -27,6 +24,8 @@ public sealed record ActionRouterInputs
 	/// A sample of the parent ids each dataset publishes, for the id-format pre-check on the orphan row.
 	/// </summary>
 	public IReadOnlyList<ParentIdSample> ParentIdSamples { get; init; } = [];
+
+    public IReadOnlyList<DatasetFutureDecline> FutureDeclines { get; init; } = [];
 
 	/// <summary>
 	/// Feed id to <c>feeds.type</c>, for the rows the tree limits to Slot and ScheduledSession feeds.
@@ -190,6 +189,36 @@ public static class ActionRouter
 			});
 		}
 
+        foreach (var decline in inputs.FutureDeclines)
+        {
+            if (decline.ConsecutiveDays < thresholds.FutureDeclineDays)
+            {
+                continue;
+            }
+
+            if (!decline.Feeds.Any(f => IsSessionKind(f.FeedId, inputs, thresholds)))
+            {
+                continue;
+            }
+
+            if (actions.FirstFor(decline.DatasetId, DeclinePreChecks) is { } explained)
+            {
+                actions.Suppress(explained, MonitorActionKind.FutureDecline);
+                continue;
+            }
+
+            // TODO: seasonal and counter-reset checks go here once  we have enough history to implement them.
+            actions.Add(new MonitorAction
+            {
+                Kind = MonitorActionKind.FutureDecline,
+                DatasetUrl = decline.DatasetId,
+                FirstDetected = decline.DeclineStart,
+                ConsecutiveDays = decline.ConsecutiveDays,
+                SeasonalCheck = SeasonalCheckUnavailable,
+                Incident = decline,
+            });
+        }
+
 		return actions.Build();
 	}
 
@@ -213,6 +242,17 @@ public static class ActionRouter
 		MonitorActionKind.AuthenticationRequired,
 		MonitorActionKind.SingleFeedStall,
 	];
+
+    // Same idea as the orphan list, but the tree adds dataset stalls for this row.
+    private static readonly string[] DeclinePreChecks =
+    [
+        MonitorActionKind.HttpEndpointFailure,
+        MonitorActionKind.AuthenticationRequired,
+        MonitorActionKind.DatasetStall,
+        MonitorActionKind.SingleFeedStall,
+    ];
+
+    private const string SeasonalCheckUnavailable = "unavailable";
 
 	/// <summary>
 	/// Child kinds whose missing parents are in a different id format from the parents the dataset

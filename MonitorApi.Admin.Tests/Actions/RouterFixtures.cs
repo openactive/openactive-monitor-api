@@ -90,4 +90,20 @@ internal static class RouterFixtures
 
 	public static ParentIdSample ParentSample(string kind, IReadOnlyList<string> ids, string dataset = "d1") =>
 		new(dataset, kind, ids);
+
+    public static DatasetFutureDecline Decline(int days, string dataset = "d1", params string[] feedIds) => new()
+    {
+        DatasetId = dataset,
+        Reason = FutureDeclineReasons.MonotonicDecline,
+        DeclineStart = AsOf.AddDays(-days),
+        ConsecutiveDays = days,
+        PastThreshold = false,
+        StartTotal = 1_000,
+        CurrentTotal = 400,
+        QualifyStartTotal = 1_000,
+        Feeds = (feedIds.Length == 0 ? ["f1"] : feedIds)
+            .Select(id => new FeedFutureDecline(id, FutureDeclineReasons.MonotonicDecline, AsOf.AddDays(-days), 1_000, 400, 1_000, 10, 0, 0))
+            .ToList(),
+        Trend = [],
+    };
 }
