@@ -94,6 +94,8 @@ public class DatasetFutureDeclineIncidentsEndpointTests(AdminApiFixture fixture)
 			{
 				Assert.NotEmpty(feed.FeedId);
 				Assert.NotEmpty(feed.FeedName);
+				// Slot feeds are excluded from the monitor, so no feed the incident reports can be one.
+				Assert.NotEqual("Slot", feed.FeedType);
 				Assert.Equal(feed.StartFuture - feed.CurrentFuture, feed.Drop);
 				// The minimum-supply floor is applied to the figure the window starts from.
 				Assert.True(feed.StartFuture >= 50);

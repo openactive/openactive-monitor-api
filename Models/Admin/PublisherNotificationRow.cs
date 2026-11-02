@@ -8,6 +8,7 @@ public class PublisherNotificationBody
 	public required string Id { get; init; }
 	public string? PublisherId { get; init; }
 	public string? PublisherName { get; init; }
+	public string? DatasetUrl { get; init; }
 	public long? ProblemCount { get; init; }
 	public IReadOnlyList<string> Monitors { get; init; } = [];
 	public long? OldestDaysOpen { get; init; }

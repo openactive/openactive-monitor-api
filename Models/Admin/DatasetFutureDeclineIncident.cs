@@ -149,6 +149,12 @@ public sealed class DatasetFutureDeclineFeed
 	/// <summary>Short feed name — the last path segment of the feed URL.</summary>
 	public required string FeedName { get; init; }
 
+	/// <summary>
+	/// OpenActive feed kind, e.g. <c>ScheduledSession</c>, <c>FacilityUse</c>, or <c>null</c> when the
+	/// feed has no <c>feeds</c> row. Never <c>Slot</c>: this monitor excludes slot feeds.
+	/// </summary>
+	public required string? FeedType { get; init; }
+
 	/// <summary>Which rule this feed fired: <c>monotonic_decline</c>, <c>sharp_drop</c> or <c>both</c>.</summary>
 	public required string Reason { get; init; }
 

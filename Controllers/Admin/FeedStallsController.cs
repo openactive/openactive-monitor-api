@@ -63,7 +63,13 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 		var stalls = SingleFeedStallDetector.Detect(histories, snapshotDate.Value, thresholds);
 
 		var metadata = await LoadFeedMetadata(stalls.Select(s => s.FeedId).ToList());
-		var incidents = stalls.Select(stall => ToIncident(stall, metadata.GetValueOrDefault(stall.FeedId))).ToList();
+		var datasets = await LoadDatasetMetadata(stalls.Select(s => s.DatasetId).Distinct().ToList());
+		var incidents = stalls
+			.Select(stall => ToIncident(
+				stall,
+				metadata.GetValueOrDefault(stall.FeedId),
+				datasets.GetValueOrDefault(stall.DatasetId)))
+			.ToList();
 
 		return Ok(Paginate(incidents, page, page_size, snapshotDate.Value));
 	}
@@ -144,11 +150,13 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 	/// <summary>
 	/// Hydrates a detected stall into the dashboard payload. <paramref name="metadata"/> is null when the
 	/// feed appears in the ingestion table but has no <c>feeds</c> row; the incident is still reported,
-	/// with the descriptive fields left empty.
+	/// with the descriptive fields left empty. <paramref name="dataset"/> is null in the same case for
+	/// the dataset, whose name then falls back to the URL's host.
 	/// </summary>
-	private static StallIncident ToIncident(SingleFeedStall stall, FeedMetadata? metadata)
+	private static StallIncident ToIncident(SingleFeedStall stall, FeedMetadata? metadata, DatasetMetadata? dataset)
 	{
 		var feed = metadata ?? new FeedMetadata(stall.FeedId, null, null, null, null);
+		var owner = dataset ?? new DatasetMetadata(stall.DatasetId, null, null);
 
 		return new StallIncident
 		{
@@ -159,6 +167,8 @@ public class FeedStallsController(IOptions<BigQueryOptions> bigQueryOptions, IOp
 			FeedName = feed.FeedName,
 			FeedType = feed.FeedType,
 			FeedUrl = feed.FeedUrl,
+			DatasetUrl = stall.DatasetId,
+			DatasetName = owner.Name,
 			FirstDetected = stall.LastPublished,
 			// Under the current model an incident opens the day the feed goes quiet and stays open until
 			// it publishes again, so days open and consecutive silent days always coincide. They would

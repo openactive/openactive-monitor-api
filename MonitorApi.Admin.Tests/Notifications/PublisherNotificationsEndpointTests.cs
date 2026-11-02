@@ -71,6 +71,7 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 				Id = id,
 				PublisherId = "pub_test-dummy",
 				PublisherName = "Test Dummy Publisher",
+				DatasetUrl = "https://dummy-publisher.example.org/openactive",
 				ProblemCount = 1,
 				Monitors = ["single_feed_stall"],
 				OldestDaysOpen = 3,
@@ -91,8 +92,16 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 			Assert.NotNull(created);
 			Assert.Equal(id, created.Data.Id);
 			Assert.Equal("open", created.Data.Status);
+			Assert.Equal(createBody.DatasetUrl, created.Data.DatasetUrl);
 			Assert.NotNull(created.Data.CreatedAt);
 			Assert.NotNull(created.Data.UpdatedAt);
+
+			// The table has no primary key, so the controller enforces the id's uniqueness itself.
+			var duplicateResponse = await client.PostAsJsonAsync(
+				_fixture.WithAdminToken(ListRoute),
+				createBody,
+				JsonOptions);
+			Assert.Equal(HttpStatusCode.Conflict, duplicateResponse.StatusCode);
 
 			var listResponse = await client.GetAsync(_fixture.WithAdminToken(ListRoute));
 			Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
@@ -104,6 +113,7 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 				Id = id,
 				PublisherId = createBody.PublisherId,
 				PublisherName = createBody.PublisherName,
+				DatasetUrl = "https://dummy-publisher.example.org/openactive/v2",
 				ProblemCount = 2,
 				Monitors = ["single_feed_stall", "feed_ingestion_error"],
 				OldestDaysOpen = 5,
@@ -127,6 +137,7 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 			Assert.Equal(2, updated.Data.ProblemCount);
 			Assert.Equal(2, updated.Data.Monitors.Count);
 			Assert.Equal("endpoint test updated", updated.Data.Notes);
+			Assert.Equal(updateBody.DatasetUrl, updated.Data.DatasetUrl);
 		}
 		finally
 		{

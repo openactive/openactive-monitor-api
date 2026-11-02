@@ -109,6 +109,12 @@ public sealed class DatasetStallFeed
 	public required string FeedName { get; init; }
 
 	/// <summary>
+	/// OpenActive feed kind, e.g. <c>ScheduledSession</c>, <c>Slot</c>, <c>FacilityUse</c>, or
+	/// <c>null</c> when the feed has no <c>feeds</c> row.
+	/// </summary>
+	public required string? FeedType { get; init; }
+
+	/// <summary>
 	/// The feed's last publishing day, or <c>null</c> when it never published inside the lookback
 	/// window — a feed that has never been seen to work, rather than one that stopped.
 	/// </summary>

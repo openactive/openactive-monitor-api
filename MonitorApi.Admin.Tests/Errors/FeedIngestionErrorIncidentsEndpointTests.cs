@@ -52,6 +52,8 @@ public class FeedIngestionErrorIncidentsEndpointTests(AdminApiFixture fixture) :
 			Assert.Equal(FeedIngestionErrorDetector.MonitorId, incident.MonitorId);
 			Assert.NotEmpty(incident.FeedId);
 			Assert.NotEmpty(incident.FeedName);
+			Assert.NotEmpty(incident.DatasetUrl);
+			Assert.NotEmpty(incident.DatasetName);
 			Assert.StartsWith("pub_", incident.PublisherId);
 			Assert.Equal("open", incident.Status);
 			Assert.Null(incident.LastContacted);

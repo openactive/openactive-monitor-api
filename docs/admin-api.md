@@ -229,6 +229,8 @@ The `trend` column always covers the trailing ten days, independently of `lookba
   "feed_name": "facility-uses",
   "feed_type": "FacilityUse",
   "feed_url": "https://actihire.bookteq.com/api/open-active/facility-uses",
+  "dataset_url": "https://actihire.bookteq.com/api/open-active",
+  "dataset_name": "Actihire Facilities",
   "first_detected": "2026-08-20",
   "days_open": 12,
   "consecutive_days": 12,
@@ -245,6 +247,9 @@ Field notes:
 
 - `publisher_id` is a slug derived from `publisher_name` (`pub_<slug>`), not a stored identifier.
 - `feed_name` is the last path segment of the feed URL.
+- `dataset_url` is the dataset the feed belongs to, matching `feeds.dataset_url` and the identity of
+  every dataset-level incident, so a feed incident can be lined up against them. `dataset_name` is the
+  stored `feed_quality.dataset_name`, falling back to the host of the URL, so it is never empty.
 - `first_detected` is the day the feed went quiet — its last publishing day — which is also
   `detail.last_modified`.
 - `past_threshold` is `true` once `days_open` reaches `past_threshold_days`, which defaults to **7**.
@@ -351,12 +356,14 @@ independently of `lookback_days`.
       {
         "feed_id": "shirleyhighschool-bookteq-com-api-open-active-slots",
         "feed_name": "slots",
+        "feed_type": "Slot",
         "last_published": "2026-09-01",
         "consecutive_days": 9
       },
       {
         "feed_id": "shirleyhighschool-bookteq-com-api-open-active-facility-uses",
         "feed_name": "facility-uses",
+        "feed_type": "FacilityUse",
         "last_published": null,
         "consecutive_days": null
       }
@@ -378,6 +385,8 @@ Field notes:
   last and dates the incident, and the rest show whether the dataset stopped all at once or wound down
   feed by feed. A feed's own `consecutive_days` is therefore never smaller than the incident's, and is
   `null` — with `last_published` — for a feed never seen to publish.
+- `detail.feeds[].feed_type` is the feed's stored `feeds.feed_type`, or `null` when the feed has no
+  `feeds` row.
 - `trend` is the dataset's daily `updated` total from `opportunity_ingestion` over the trailing **ten
   days**, oldest first, ending on `snapshot_date` — every feed's counts added up. Always ten entries, so
   entry *i* is the same day for every incident in the response.
@@ -460,6 +469,8 @@ The `trend` column always covers the trailing ten days, independently of `succes
   "feed_name": "sessionSeries",
   "feed_type": "SessionSeries",
   "feed_url": "https://api.findmyfacility.com/v1/openactive/sessionSeries",
+  "dataset_url": "https://api.findmyfacility.com/v1/openactive",
+  "dataset_name": "Find My Facility",
   "first_detected": "2026-09-02",
   "days_open": 8,
   "consecutive_days": 8,
@@ -476,7 +487,8 @@ The `trend` column always covers the trailing ten days, independently of `succes
 }
 ```
 
-The identifier, publisher and feed fields carry the same meaning as on a stall incident; the rest:
+The identifier, publisher, feed and dataset fields carry the same meaning as on a stall incident; the
+rest:
 
 - `first_detected` is the day after `detail.last_completed` — the first day the feed can be shown to
   have been failing.
@@ -760,6 +772,7 @@ covers the trailing ten days, independently of `window_days`.
       {
         "feed_id": "better-admin-org-uk-api-openactive-better-scheduled-sessions",
         "feed_name": "scheduled-sessions",
+        "feed_type": "ScheduledSession",
         "reason": "monotonic_decline",
         "start_future": 190167,
         "current_future": 177186,
@@ -792,6 +805,8 @@ Field notes:
   last observation in the window; `drop` is the difference and `drop_percent` that difference over
   `start_total`, to two decimal places. A dataset's own feeds may each have fallen over different pairs
   of days, which is why the per-feed figures are given too.
+- `detail.feeds[].feed_type` is the feed's stored `feeds.feed_type`, or `null` when the feed has no
+  `feeds` row. It is never `Slot`: Slot feeds are excluded from this monitor.
 - `detail.feeds[].largest_daily_drop_percent` is the steepest single step down in the window — the
   figure the `sharp_drop` rule tests. For a monotonic decline it is simply the worst of many small falls
   and may be well under `drop_percent`.
@@ -1501,6 +1516,11 @@ Counts for the whole table: `publishers`, `open`, `in_progress`, `closed`,
 
 Create a row. Body fields match the list row (including `id`, `monitors`, optional `problems` JSON).
 Returns `201` with the created row in `{ data, meta }`.
+
+The caller supplies `id`, and it must be new: a row that already has it answers `409` and nothing is
+written. The table has no primary key, so this check is what stops a retried POST inserting a second
+row with the same id. It is a read followed by an insert, not a constraint, so two concurrent POSTs of
+one id can still both land.
 
 ### `PATCH /admin/publisher-notifications/{id}`
 

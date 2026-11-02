@@ -13,6 +13,7 @@ internal static class PublisherNotificationsQuery
         SELECT id,  
                publisher_id,
                publisher_name,
+               dataset_url,
                problem_count,
                monitors,
                oldest_days_open,
@@ -31,7 +32,7 @@ internal static class PublisherNotificationsQuery
     /// <summary> Fetch one row by id. </summary>
     public static string GetByIdSql(string table) =>
         $"""
-        SELECT id, publisher_id, publisher_name, problem_count, monitors,
+        SELECT id, publisher_id, publisher_name, dataset_url, problem_count, monitors,
                oldest_days_open, status, stakeholder, contact, date_contacted,
                notes, problems, created_at, updated_at
         FROM {table}
@@ -89,11 +90,11 @@ internal static class PublisherNotificationsQuery
     public static string InsertSql(string table) =>
        $"""
        INSERT INTO {table} (
-         id, publisher_id, publisher_name, problem_count, monitors,
+         id, publisher_id, publisher_name, dataset_url, problem_count, monitors,
          oldest_days_open, status, stakeholder, contact, date_contacted,
          notes, problems, created_at, updated_at
        ) VALUES (
-         @id, @publisher_id, @publisher_name, @problem_count, @monitors,
+         @id, @publisher_id, @publisher_name, @dataset_url, @problem_count, @monitors,
          @oldest_days_open, @status, @stakeholder, @contact, @date_contacted,
          @notes, PARSE_JSON(@problems), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
        )
@@ -109,6 +110,7 @@ internal static class PublisherNotificationsQuery
 		UPDATE {table}
 		SET publisher_id = @publisher_id,
 		    publisher_name = @publisher_name,
+		    dataset_url = @dataset_url,
 		    problem_count = @problem_count,
 		    monitors = @monitors,
 		    oldest_days_open = @oldest_days_open,
@@ -131,6 +133,7 @@ internal static class PublisherNotificationsQuery
         new("id", BigQueryDbType.String, id),
         new("publisher_id", BigQueryDbType.String, body.PublisherId),
         new("publisher_name", BigQueryDbType.String, body.PublisherName),
+        new("dataset_url", BigQueryDbType.String, body.DatasetUrl),
         new("problem_count", BigQueryDbType.Int64, body.ProblemCount),
         new("monitors", BigQueryDbType.Array, body.Monitors.ToList()) { ArrayElementType = BigQueryDbType.String },
         new("oldest_days_open", BigQueryDbType.Int64, body.OldestDaysOpen),
@@ -166,6 +169,7 @@ internal static class PublisherNotificationsQuery
             Id = (string)row["id"],
             PublisherId = row.GetValueOrDefault("publisher_id") as string,
             PublisherName = row.GetValueOrDefault("publisher_name") as string,
+            DatasetUrl = row.GetValueOrDefault("dataset_url") as string,
             ProblemCount = BigQueryValueParser.AsLong(row.GetValueOrDefault("problem_count")),
             OldestDaysOpen = BigQueryValueParser.AsLong(row.GetValueOrDefault("oldest_days_open")),
             Status = row.GetValueOrDefault("status") as string,
