@@ -53,18 +53,7 @@ public class ActionsController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
         }
 
         var day = snapshotDate.Value;
-        var inputs = await LoadInputs(day);
-        var actions = ActionRouter.Route(inputs);
-
-        var datasets = await LoadDatasetMetadata(actions.Select( a => a.DatasetUrl).Distinct().ToList());
-        var feeds = await LoadFeedMetadata(actions.Where(a => a.FeedId is not null).Select(a => a.FeedId!).Distinct().ToList());
-
-        var rows = actions
-            .Select(a => MonitorActionRows.From(
-                a,
-                datasets.GetValueOrDefault(a.DatasetUrl),
-                a.FeedId is null ? null : feeds.GetValueOrDefault(a.FeedId)))
-            .ToList();
+        var rows = await LoadActionRows(day);
 
         var kinds = NormaliseMultiValue(kind);
         if (kinds.Count > 0)
@@ -73,69 +62,5 @@ public class ActionsController(IOptions<BigQueryOptions> bigQueryOptions, IOptio
         }
 
         return Ok(Paginate(rows, page, page_size, day));
-    }
-
-    private async Task<ActionRouterInputs> LoadInputs(DateOnly day)
-    {
-        // Trend windows are cut to one day because nothing here reads them.
-        var feedStallThresholds = new SingleFeedStallThresholds { TrendDays = 1, IncidentTrendDays = 1 };
-        var datasetStallThresholds = new DatasetStallThresholds { TrendDays = 1, IncidentTrendDays = 1 };
-        var errorThresholds = new FeedIngestionErrorThresholds { TrendDays = 1, IncidentTrendDays = 1 };
-        var declineThresholds = new DatasetFutureDeclineThresholds { TrendDays = 1, IncidentTrendDays = 1 };
-
-        var histories = await LoadHistories(
-            day,
-            Math.Max(feedStallThresholds.RequiredHistoryDays, datasetStallThresholds.RequiredHistoryDays),
-            trendDays: 1,
-            ignoreFirstIngestionDate: true);
-        
-        var statusHistories = await LoadStatusHistories(day, errorThresholds.RequiredHistoryDays);
-        var supply = await LoadFutureSupply(day, declineThresholds.RequiredHistoryDays, DatasetSupplyController.IgnoredKinds);
-        var orphanCounts = await LoadOrphanCounts();
-
-        var singleFeedStalls = SingleFeedStallDetector.Detect(histories, day, feedStallThresholds);
-        var declines = DatasetFutureDeclineDetector.Detect(supply, day, declineThresholds);
-        var orphans = OrphanedChildrenDetector.Detect(orphanCounts, new OrphanedChildrenThresholds());
-
-        // Only fetch parent ids for datasets whose orphans are bad enough to trigger.
-        var triggers = new ActionTriggers();
-        var orphanDatasets = orphans
-            .Where(o => o.OrphanShare >= triggers.OrphanShare)
-            .Select(o => o.DatasetUrl)
-            .ToList();
-
-        var feedIds = singleFeedStalls.Select(s => s.FeedId)
-            .Concat(declines.SelectMany(d => d.Feeds).Select(f => f.FeedId))
-            .Distinct()
-            .ToList();
-        var feedKinds = (await LoadFeedMetadata(feedIds))
-            .Where(f => f.Value.FeedType is not null)
-            .ToDictionary(f => f.Key, f => f.Value.FeedType!, StringComparer.Ordinal);
-
-        return new ActionRouterInputs
-        {
-            HttpFailures = FeedIngestionErrorDetector.Detect(statusHistories, day, errorThresholds),
-            AuthFailures = AuthRequiredDetector.Detect(statusHistories, day),
-            DatasetStalls = DatasetStallDetector.Detect(histories, day, datasetStallThresholds),
-            SingleFeedStalls = singleFeedStalls,
-            Orphans = orphans,
-            ParentIdSamples = await LoadParentIdSamples(orphanDatasets),
-            FutureDeclines = declines,
-            FeedKinds = feedKinds,
-        };
-    }
-
-    private async Task<List<ParentIdSample>> LoadParentIdSamples(IReadOnlyCollection<string> datasetUrls)
-    {
-        if (datasetUrls.Count == 0)
-        {
-            return [];
-        }
-
-        var rows = await Query(
-            ParentIdSampleQuery.ParentIdSampleSql(Fq(Tables.Opportunities)),
-            ParentIdSampleQuery.ParentIdSampleParameters(datasetUrls));
-
-        return await rows.Select(ParentIdSampleQuery.ParseParentIdSample).ToListAsync();
     }
 }

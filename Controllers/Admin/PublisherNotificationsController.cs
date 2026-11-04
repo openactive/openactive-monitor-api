@@ -14,7 +14,7 @@ namespace MonitorApi.Controllers.Admin;
 public class PublisherNotificationsController(
 	IOptions<BigQueryOptions> bigQueryOptions,
 	IOptions<ApiOptions> apiOptions)
-	: AdminControllerBase(bigQueryOptions, apiOptions)
+	: MonitorControllerBase(bigQueryOptions, apiOptions)
 {
 	/// <summary>List publisher notification rows.</summary>
 	[HttpGet("publisher-notifications")]
@@ -126,4 +126,46 @@ public class PublisherNotificationsController(
 		await QuerySingle(PublisherNotificationsQuery.DeleteSql(table), idParam);
 		return NoContent();
 	}
+
+
+    /// <summary>Scan the monitors into the notification list.</summary>
+    /// <remarks>
+    /// Works out today's monitor actions, the same list <c>/admin/actions</c> returns, groups them by
+    /// publisher and saves one row per publisher. New publishers get a new <c>open</c> row. For
+    /// publishers already on the list only the problem fields are replaced: status, stakeholder,
+    /// contact, date contacted and notes are never changed by a scan.
+    ///
+    /// Rows for publishers whose problems have gone away are left as they are. Problems whose
+    /// publisher name isn't known are skipped and counted in <c>actions_skipped</c>.
+    /// </remarks>
+    [HttpPost("publisher-notifications/scan")]
+    [ProducesResponseType(typeof(AdminDocument<PublisherScanSummary>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<AdminDocument<PublisherScanSummary>>> Scan()
+    {
+        var snapshotDate = await ResolveSnapshotDate(asOf: null);
+        if (snapshotDate is null)
+        {
+            var empty = new PublisherScanSummary { PublishersSaved = 0, ActionsFound = 0, ActionsSkipped = 0 };
+            return Ok(Document(empty, DateOnly.FromDateTime(DateTime.UtcNow)));
+        }
+
+        var rows = await LoadActionRows(snapshotDate.Value);
+        var result = PublisherNotificationScan.Group(rows);
+
+        if (result.Publishers.Count > 0)
+        {
+            await QuerySingle(
+                PublisherNotificationsQuery.ScanMergeSql(Fq(Tables.PublisherNotifications)),
+                PublisherNotificationsQuery.ScanMergeParameters(result.Publishers));
+        }
+
+        var summary = new PublisherScanSummary
+        {
+            PublishersSaved = result.Publishers.Count,
+            ActionsFound = rows.Count,
+            ActionsSkipped = result.SkippedActions,
+        };
+
+        return Ok(Document(summary, snapshotDate.Value));
+    }
 }

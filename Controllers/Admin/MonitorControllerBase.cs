@@ -214,4 +214,74 @@ public abstract class MonitorControllerBase(IOptions<BigQueryOptions> bigQueryOp
 
 		return await rows.Select(ParentIdSampleQuery.ParseParentIdSample).ToListAsync();
 	}
+
+
+	/// <summary>
+	/// Runs every monitor for <paramref name="day"/>, applies the decision tree, and returns the 
+	/// actions with publisher and feed names filled in.
+	/// </summary>
+	protected async Task<List<MonitorActionRow>> LoadActionRows(DateOnly day)
+	{
+		var actions = ActionRouter.Route(await LoadActionInputs(day));
+
+		var datasets = await LoadDatasetMetadata(actions.Select(a => a.DatasetUrl).Distinct().ToList());
+		var feeds = await LoadFeedMetadata(actions.Where(a => a.FeedId is not null).Select(a => a.FeedId!).Distinct().ToList());
+
+		return actions
+			.Select(a => MonitorActionRows.From(
+				a,
+				datasets.GetValueOrDefault(a.DatasetUrl),
+				a.FeedId is null ? null : feeds.GetValueOrDefault(a.FeedId)))
+			.ToList();
+	}
+
+	private async Task<ActionRouterInputs> LoadActionInputs(DateOnly day)
+	{
+		// Trend windows are cut to one day because nothing here reads them.
+		var feedStallThresholds = new SingleFeedStallThresholds { TrendDays = 1, IncidentTrendDays = 1 };
+		var datasetStallThresholds = new DatasetStallThresholds { TrendDays = 1, IncidentTrendDays = 1 };
+		var errorThresholds = new FeedIngestionErrorThresholds { TrendDays = 1, IncidentTrendDays = 1 };
+		var declineThresholds = new DatasetFutureDeclineThresholds { TrendDays = 1, IncidentTrendDays = 1 };
+
+		var histories = await LoadHistories(
+			day,
+			Math.Max(feedStallThresholds.RequiredHistoryDays, datasetStallThresholds.RequiredHistoryDays),
+			trendDays: 1,
+			ignoreFirstIngestionDate: true);
+		
+		var statusHistories = await LoadStatusHistories(day, errorThresholds.RequiredHistoryDays);
+		var supply = await LoadFutureSupply(day, declineThresholds.RequiredHistoryDays, DatasetSupplyController.IgnoredKinds);
+		var orphanCounts = await LoadOrphanCounts();
+
+		var singleFeedStalls = SingleFeedStallDetector.Detect(histories, day, feedStallThresholds);
+		var declines = DatasetFutureDeclineDetector.Detect(supply, day, declineThresholds);
+		var orphans = OrphanedChildrenDetector.Detect(orphanCounts, new OrphanedChildrenThresholds());
+
+		// Only fetch parent ids for datasets whose orphans are bad enough to trigger.
+		var triggers = new ActionTriggers();
+		var orphanDatasets = orphans
+			.Where(o => o.OrphanShare >= triggers.OrphanShare)
+			.Select(o => o.DatasetUrl)
+			.ToList();
+
+		var feedIds = singleFeedStalls.Select(s => s.FeedId)
+			.Concat(declines.SelectMany(d => d.Feeds).Select(f => f.FeedId))
+			.Distinct()
+			.ToList();
+		var feedKinds = (await LoadFeedMetadata(feedIds))
+			.Where(f => f.Value.FeedType is not null)
+			.ToDictionary(f => f.Key, f => f.Value.FeedType!, StringComparer.Ordinal);
+
+		return new ActionRouterInputs
+		{
+			HttpFailures = FeedIngestionErrorDetector.Detect(statusHistories, day, errorThresholds),
+			AuthFailures = AuthRequiredDetector.Detect(statusHistories, day),
+			DatasetStalls = DatasetStallDetector.Detect(histories, day, datasetStallThresholds),
+			SingleFeedStalls = singleFeedStalls,
+			Orphans = orphans,
+			ParentIdSamples = await LoadParentIdSamples(orphanDatasets),
+			FutureDeclines = declines,
+			FeedKinds = feedKinds,
+		};
+	}
 }

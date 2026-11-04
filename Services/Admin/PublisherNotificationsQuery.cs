@@ -159,6 +159,61 @@ internal static class PublisherNotificationsQuery
         new("problems", BigQueryDbType.String, body.Problems?.GetRawText() ?? "null"),
     ];
 
+
+    /// <summary>
+    /// Saves scanned publishers. New publishers get a new open row; existing rows only have their
+    /// problem fields replaced, so the steward's status, stakeholder, contact, date and notes stay put.
+    /// </summary>
+    public static string ScanMergeSql(string table) =>
+        $"""
+        MERGE {table} AS t
+        USING (
+          SELECT id,
+                 @publisher_ids[OFFSET(i)] AS publisher_id,
+                 @publisher_names[OFFSET(i)] AS publisher_name,
+                 @problem_counts[OFFSET(i)] AS problem_count,
+                 SPLIT(@monitors[OFFSET(i)], ',') AS monitors,
+                 NULLIF(@oldest_days_open[OFFSET(i)], -1) AS oldest_days_open,
+                 PARSE_JSON(@problems[OFFSET(i)]) AS problems
+          FROM UNNEST(@ids) AS id WITH OFFSET AS i
+        ) AS s
+        ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET
+          publisher_id = s.publisher_id,
+          publisher_name = s.publisher_name,
+          problem_count = s.problem_count,
+          monitors = s.monitors,
+          oldest_days_open = s.oldest_days_open,
+          problems = s.problems,
+          updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (
+          id, publisher_id, publisher_name, problem_count, monitors,
+          oldest_days_open, status, problems, created_at, updated_at
+        ) VALUES (
+          s.id, s.publisher_id, s.publisher_name, s.problem_count, s.monitors,
+          s.oldest_days_open, 'open', s.problems, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+        )
+        """;
+
+    public static BigQueryParameter[] ScanMergeParameters(IReadOnlyList<ScannedPublisher> publishers) =>
+    [
+        Strings("ids", publishers.Select(p => p.Id)),
+        Strings("publisher_ids", publishers.Select(p => p.PublisherId)),
+        Strings("publisher_names", publishers.Select(p => p.PublisherName)),
+        Longs("problem_counts", publishers.Select(p => (long)p.ProblemCount)),
+        // BigQuery can't hold a list inside a list, so each publisher's monitors go in as one string.
+        Strings("monitors", publishers.Select(p => string.Join(',', p.Monitors))),
+        // Or nulls inside a list parameter, so "no oldest day" is sent as -1 and turned back into NULL.
+        Longs("oldest_days_open", publishers.Select(p => (long)(p.OldestDaysOpen ?? -1))),
+        Strings("problems", publishers.Select(p => p.ProblemsJson)),
+    ];
+
+    private static BigQueryParameter Strings(string name, IEnumerable<string> values) =>
+        new(name, BigQueryDbType.Array, values.ToList()) { ArrayElementType = BigQueryDbType.String };
+
+    private static BigQueryParameter Longs(string name, IEnumerable<long> values) =>
+        new(name, BigQueryDbType.Array, values.ToList()) { ArrayElementType = BigQueryDbType.Int64 };
+
     /// <summary>
     /// Reads the single summary row. Missing row or NULL columns become zero.
     /// </summary>
