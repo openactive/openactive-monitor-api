@@ -90,7 +90,7 @@ figures past the refresh or re-scan the ingestion history for nothing.
 Entries vary by the full query string, so changing any parameter (including the token) is a separate
 entry. Only `200` responses are cached — a `403` from a bad token is not. **When checking a change by
 hand, expect the previous body**: restart the app, or vary a parameter, to force a fresh query.
-**Exception:** `/admin/publisher-notifications` (list, summary, create, update, delete) is not
+**Exception:** `/admin/publisher-notifications` (list, summary, create, update, delete, scan) is not
 cached — stewards need writes to show up immediately.
 
 ## Endpoints
@@ -1483,7 +1483,7 @@ The rules worth knowing:
 ## Publisher notifications
 
 Steward work list of publishers that need contacting. Rows live in BigQuery
-`publisher_notifications`. v1 uses dummy data; live monitor scanning comes later.
+`publisher_notifications`. Rows are filled in by the scan (see below) or by hand.
 These routes are **not** output-cached.
 
 Statuses: `open`, `in_progress`, `closed`.
@@ -1504,13 +1504,72 @@ Returns `201` with the created row in `{ data, meta }`.
 
 ### `PATCH /admin/publisher-notifications/{id}`
 
-Update writable fields on a row (publisher details, monitors, problems, status, contact, notes, etc.).
+Partial update. Only the fields you send are changed; anything left out keeps its value.
 Id comes from the URL. `created_at` is not changed; `updated_at` is set by BigQuery.
-The UI can send only the fields it edits; the API accepts a full body. Returns `404` if the id is missing.
+A field can't be cleared back to empty with PATCH. Returns `404` if the id is missing.
 
 ### `DELETE /admin/publisher-notifications/{id}`
 
 Remove a row. Returns `204` when deleted, `404` if the id is missing.
+
+### `POST /admin/publisher-notifications/scan`
+
+Works out today's monitor actions (the same list as `GET /admin/actions`), groups them by
+publisher and saves them to the list. No body.
+
+- New publishers get a row with id `pn_<publisher slug>` and status `open`.
+- Existing rows only have their problem fields updated (`problem_count`, `monitors`,
+  `oldest_days_open`, `problems`). Status, contact, stakeholder and notes are never touched.
+- A scan never deletes, closes or reopens rows. Running it twice on the same day gives the same list.
+- Actions whose publisher we can't name are skipped and counted.
+
+```json
+{
+  "data": { "publishers_saved": 12, "actions_found": 30, "actions_skipped": 1 },
+  "meta": {
+    "snapshot_date": "2026-11-03",
+    "generated_at": "2026-11-04T08:15:02Z",
+    "page": 1,
+    "page_size": 1,
+    "total": 1
+  }
+}
+```
+
+This writes to BigQuery. Don't call it casually against production.
+
+## Monitor actions
+
+### `GET /admin/actions`
+
+Runs every monitor for one day and applies the Monitor Actions Decision Tree. Each row is one
+problem to raise with a publisher, worst first. Query params: `page`, `page_size`, `kind`, `as_of`.
+
+**Triggers** (a problem is only reported once it reaches these):
+
+| Kind | Trigger |
+|---|---|
+| `http_endpoint_failure` | 10 days |
+| `authentication_required` | 10 days |
+| `dataset_stall` | 5 days |
+| `single_feed_stall` | 10 days, `Slot` and `ScheduledSession` feeds only |
+| `orphaned_children` / `id_pattern_mismatch` | 20% of a dataset's children |
+| `future_decline` | 15 days, `Slot` and `ScheduledSession` only |
+
+**Pre-checks.** A bigger problem hides a smaller one in the same dataset, and the hidden one is
+listed in the row's `suppressed` field:
+
+- Orphans are hidden by an HTTP failure, an auth failure or a single-feed stall.
+- Future decline is hidden by an HTTP failure, an auth failure, a dataset stall or a single-feed stall.
+- Only problems that have reached their trigger can hide others.
+
+Orphans whose missing parent ids use a different format from the parents the dataset publishes
+are reported as `id_pattern_mismatch` instead of `orphaned_children`.
+
+**Not built yet.** The seasonal and counter-reset checks for future decline. Those rows carry
+`seasonal_check: "unavailable"`.
+
+Cached until the next daily refresh, like the other monitors.
 
 ## Source data
 

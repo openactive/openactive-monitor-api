@@ -36,8 +36,10 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/publisher-notifications`: steward work list of publishers (BigQuery-backed; not cached)
 - `GET /admin/publisher-notifications/summary`: status/alert counts for that list
 - `POST /admin/publisher-notifications`: create a row
-- `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
+- `PATCH /admin/publisher-notifications/{id}`: partial update (only fields sent are changed)
 - `DELETE /admin/publisher-notifications/{id}`: delete a row
+- `POST /admin/publisher-notifications/scan`: save today's monitor actions to the list, grouped by publisher
+- `GET /admin/actions`: what the Monitor Actions Decision Tree says to do today, worst first
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.

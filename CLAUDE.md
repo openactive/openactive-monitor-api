@@ -54,6 +54,9 @@ Do not merge the two, and do not refactor `ApiController` while adding admin end
 - **Admin detection logic stays pure.** Rules that decide what a monitor reports live in
   `Services/Admin/`, free of BigQuery and ASP.NET types, so they can be unit tested without
   credentials. Controllers load rows and hydrate output; they do not decide.
+- **Decision tree.** `Services/Admin/ActionRouter.cs` turns monitor results into actions
+  (triggers in `ActionTriggers`, pre-checks in `OrphanPreChecks` / `DeclinePreChecks`).
+  `GET /admin/actions` and the publisher-notification scan both use `LoadActionRows`.
 - **Auth** is a single query-string token (`?token=`) checked in `ApiController.OnActionExecuting`
   against `Api:AccessToken`. Failure is `403` with `{ "message": "Please provide a valid token." }`.
   There is no ASP.NET auth middleware.
@@ -73,7 +76,7 @@ Do not merge the two, and do not refactor `ApiController` while adding admin end
 ## Commands
 
 ```bash
-dotnet build                                                      # build
+dotnet build OpenActive.slnx                                      # build
 dotnet run                                                        # http://localhost:5268 (+ /scalar)
 dotnet test MonitorApi.Tests/MonitorApi.Tests.csproj              # analytics; needs BigQuery credentials
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj  # admin; also needs Api:AdminToken
