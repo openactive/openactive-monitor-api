@@ -76,7 +76,7 @@ internal static class PublisherNotificationsQuery
                         AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
                       )
                       OR (
-                        JSON_VALUE(problem, '$.monitor_id') IN ('feed_ingestion_error', 'http_endpoint_failure)
+                        JSON_VALUE(problem, '$.monitor_id') IN ('feed_ingestion_error', 'http_endpoint_failure')
                         AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
                       )
                   )

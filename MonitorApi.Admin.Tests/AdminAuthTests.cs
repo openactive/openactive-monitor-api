@@ -81,4 +81,24 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 
 		Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 	}
+
+
+    [Fact]
+    public async Task Scan_NoToken_IsForbidden()
+    {
+        using var client = _fixture.CreateClient();
+        var response = await client.PostAsync("/admin/publisher-notifications/scan", null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Scan_WrongToken_IsForbidden()
+    {
+        using var client = _fixture.CreateClient();
+        var response = await client.PostAsync(
+            AdminApiFixture.WithToken("/admin/publisher-notifications/scan", "not-the-admin-token"), null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
 }

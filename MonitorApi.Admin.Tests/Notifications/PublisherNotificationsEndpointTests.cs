@@ -13,6 +13,7 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 {
 	private const string ListRoute = "/admin/publisher-notifications";
 	private const string SummaryRoute = "/admin/publisher-notifications/summary";
+	private const string ScanRoute = "/admin/publisher-notifications/scan";
 
 	private readonly AdminApiFixture _fixture = fixture;
 
@@ -204,4 +205,68 @@ public class PublisherNotificationsEndpointTests(AdminApiFixture fixture) : ICla
 			await client.DeleteAsync(_fixture.WithAdminToken($"{ListRoute}/{id}"));
 		}
 	}
+
+
+    [Fact]
+    public async Task Scan_ReturnsSummaryWithSensibleCounts()
+    {
+        using var client = _fixture.CreateClient();
+        var summary = await RunScan(client);
+
+        Assert.True(summary.ActionsFound >= 0);
+        Assert.InRange(summary.ActionsSkipped, 0, summary.ActionsFound);
+        Assert.InRange(summary.PublishersSaved, 0, summary.ActionsFound - summary.ActionsSkipped);
+    }
+
+    [Fact]
+    public async Task Scan_KeepsStewardFieldsOnExistingRows()
+    {
+        using var client = _fixture.CreateClient();
+        await RunScan(client);
+        var before = await LoadAll(client);
+
+        await RunScan(client);
+        var after = (await LoadAll(client)).ToDictionary(r => r.Id);
+
+        foreach (var row in before)
+        {
+            Assert.True(after.ContainsKey(row.Id), $"{row.Id} went missing after a scan");
+            var again = after[row.Id];
+            Assert.Equal(row.Status, again.Status);
+            Assert.Equal(row.Stakeholder, again.Stakeholder);
+            Assert.Equal(row.Contact, again.Contact);
+            Assert.Equal(row.Notes, again.Notes);
+        }
+    }
+
+    [Fact]
+    public async Task Scan_TwiceInARow_DoesNotAddRows()
+    {
+        using var client = _fixture.CreateClient();
+        await RunScan(client);
+        var first = await LoadAll(client);
+
+        await RunScan(client);
+        var second = await LoadAll(client);
+
+        Assert.Equal(first.Select(r => r.Id).Order(), second.Select(r => r.Id).Order());
+    }
+
+    private async Task<PublisherScanSummary> RunScan(HttpClient client)
+    {
+        var response = await client.PostAsync(_fixture.WithAdminToken(ScanRoute), null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var document = await response.Content.ReadFromJsonAsync<AdminDocument<PublisherScanSummary>>(JsonOptions);
+        Assert.NotNull(document);
+        return document.Data;
+    }
+
+    private async Task<List<PublisherNotificationRow>> LoadAll(HttpClient client)
+    {
+        var page = await client.GetFromJsonAsync<AdminPage<PublisherNotificationRow>>(
+            _fixture.WithAdminToken($"{ListRoute}?page_size=1000"), JsonOptions);
+        Assert.NotNull(page);
+        return page.Data.ToList();
+    }
 }
