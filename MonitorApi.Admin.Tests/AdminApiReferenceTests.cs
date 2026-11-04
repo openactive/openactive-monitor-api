@@ -43,6 +43,7 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/active-places-coverage", paths);
 		Assert.Contains("/admin/publisher-notifications", paths);
 		Assert.Contains("/admin/publisher-notifications/summary", paths);
+		Assert.Contains("/admin/actions", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
