@@ -35,6 +35,7 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/active-places-coverage`: the Active Places coverage report — headline coverage, breakdowns by area, ownership and publisher, and the unmatched OpenActive venues
 - `GET /admin/publisher-notifications`: steward work list of publishers (BigQuery-backed; not cached)
 - `GET /admin/publisher-notifications/summary`: status/alert counts for that list
+- `GET /admin/ecosystem-growth-trend`: monthly datasets crawled (as the catalogues list them in `feed_ingestion`), added, removed, without future items, stopped publishing and not ingested by the pipeline, each with the list of datasets behind it
 - `POST /admin/publisher-notifications`: create a row
 - `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
 - `DELETE /admin/publisher-notifications/{id}`: delete a row

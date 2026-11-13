@@ -50,7 +50,14 @@ internal static class PublisherNotificationsQuery
     public static BigQueryParameter IdParameter(string id) =>
         new("id", BigQueryDbType.String, id);
 
-    /// <summary>Status counts and alert totals (Slack thresholds on problems[], plus contact follow-up).</summary>
+    /// <summary>
+    /// Status counts and alert totals: Slack thresholds on problems[], contact follow-up, and problems the
+    /// daily job has marked <c>resolved_on</c> that the publisher has not been told about since.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <c>alert_reasons</c> in the dashboard's <c>monitors/publisher_notifications.py</c>; change both together.
+    /// A resolved problem never counts towards a threshold, because its days_open stopped the day it closed.
+    /// </remarks>
     public static string SummarySql(string table) =>
        $"""
        SELECT COUNT(*) AS publishers,
@@ -66,19 +73,30 @@ internal static class PublisherNotificationsQuery
                   OR EXISTS (
                     SELECT 1
                     FROM UNNEST(IF(problems IS NULL, [], JSON_QUERY_ARRAY(problems))) AS problem
-                    WHERE
-                      (
-                        JSON_VALUE(problem, '$.monitor_id') = 'dataset_stall'
-                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 5
+                    WHERE JSON_VALUE(problem, '$.resolved_on') IS NULL
+                      AND (
+                        (
+                          JSON_VALUE(problem, '$.monitor_id') = 'dataset_stall'
+                          AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 5
+                        )
+                        OR (
+                          JSON_VALUE(problem, '$.monitor_id') = 'single_feed_stall'
+                          AND JSON_VALUE(problem, '$.feed_type') IN ('Slot', 'ScheduledSession')
+                          AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
+                        )
+                        OR (
+                          JSON_VALUE(problem, '$.monitor_id') = 'feed_ingestion_error'
+                          AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
+                        )
                       )
-                      OR (
-                        JSON_VALUE(problem, '$.monitor_id') = 'single_feed_stall'
-                        AND JSON_VALUE(problem, '$.feed_type') IN ('Slot', 'ScheduledSession')
-                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
-                      )
-                      OR (
-                        JSON_VALUE(problem, '$.monitor_id') = 'feed_ingestion_error'
-                        AND SAFE_CAST(JSON_VALUE(problem, '$.days_open') AS INT64) >= 10
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM UNNEST(IF(problems IS NULL, [], JSON_QUERY_ARRAY(problems))) AS problem
+                    WHERE SAFE_CAST(JSON_VALUE(problem, '$.resolved_on') AS DATE) IS NOT NULL
+                      AND (
+                        date_contacted IS NULL
+                        OR date_contacted < SAFE_CAST(JSON_VALUE(problem, '$.resolved_on') AS DATE)
                       )
                   )
                 )
