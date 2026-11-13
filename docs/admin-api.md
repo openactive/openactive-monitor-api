@@ -32,6 +32,7 @@ http://localhost:5268/admin/active-places-site-mappings?token=<AdminToken>
 http://localhost:5268/admin/active-places-coverage?token=<AdminToken>
 http://localhost:5268/admin/publisher-notifications?token=<AdminToken>
 http://localhost:5268/admin/publisher-notifications/summary?token=<AdminToken>
+http://localhost:5268/admin/ecosystem-growth-trend?token=<AdminToken>
 ```
 
 ## API reference
@@ -1495,6 +1496,157 @@ The rules worth knowing:
 }
 ```
 
+## Ecosystem growth
+
+Not a monitor: a month-by-month view of how big the ecosystem is and how it is changing. How many
+datasets are crawled, which came into and dropped out of the catalogues, which have nothing on offer,
+and which stopped publishing. Nothing here has a `monitor_id` or a tile on `/admin/summary`.
+
+One point per **calendar month** keeps the series small enough to chart years of it. Every figure
+counts **datasets** (dataset URLs). Two tables feed it:
+
+- **`feed_ingestion`** gives the crawl figures. Each daily run records the datasets the 6 catalogues
+  listed (`datasets`), so a month's crawl list is every dataset listed on any run in it.
+  `datasets_crawled` therefore agrees with `feed_ingestion.number_of_datasets`: 173 in November 2026.
+- **`opportunity_ingestion`** gives the activity figures: what each dataset's feeds did, aggregated over
+  all its feeds and every day of the month. A crawled dataset with no rows here is **not ingested**, and
+  is left out of every activity figure except `datasets_not_ingested`.
+
+| Figure | Source | A dataset counts when… |
+|---|---|---|
+| `datasets_crawled` | `feed_ingestion` | listed by a catalogue on at least one run in the month, whatever came of crawling it |
+| `datasets_added` | `feed_ingestion` | listed this month, not listed the month before |
+| `datasets_removed` | `feed_ingestion` | listed the month before, not listed this month |
+| `datasets_not_ingested` | both | listed, but the pipeline ingested not one of its feeds all month |
+| `datasets_with_future` / `datasets_without_future` | `opportunity_ingestion` | ingested, and some feed reported a non-zero `total_future_opportunities` on some day (or none did) |
+| `datasets_stopped` | `opportunity_ingestion` | ingested, and `SUM(updated) + SUM(deleted)` across the month is zero |
+| `datasets_stopped_all_runs_failed` | `opportunity_ingestion` | stopped, and every feed run ended in `ERROR` |
+
+Things to know when reading the numbers:
+
+- **`datasets_not_ingested` describes the pipeline, not the publisher.** Feeds are found by fetching the
+  dataset page and reading the `distribution` in its JSON-LD. When that fails, or the feeds are claimed
+  by another dataset, none of the dataset's feeds are ingested, even though its page may well show them
+  in a browser. These datasets are counted as crawled (so never as removed), but in none of the future
+  or stopped figures, because nothing was read to judge them by. In November 2026 there were six, for
+  different reasons:
+  - England Squash: the crawler gets a Cloudflare 403.
+  - Strikers Indoor Football and Marston Moretaine: their bookteq dataset pages return 404, though
+    the catalogue still lists them.
+  - `openactive.goodgym.org`: its only feed is also published by `www.goodgym.org/api/openactive/`, and
+    feed ids come from the feed URL, so it is ingested daily under that dataset instead.
+  - `data.runtogether.co.uk`: a "Nothing to see here..." placeholder page.
+  - Courtside Hubs: the page and feeds look healthy, but nothing has been ingested since 2026-08-20.
+    That points to the pipeline itself.
+
+  Counting from `opportunity_ingestion` alone would drop all of these out of the crawl list and report
+  them as removed when they never left the catalogues.
+- **The activity figures are `null` before 2026-08-20**, when `opportunity_ingestion` begins, because
+  nothing says what those datasets published. `feed_ingestion` goes back to 2026-05-07, so the crawl
+  figures (crawled, added, removed) do too. August 2026 is measured over its 11 days of feed data
+  (`days_with_feed_data`), against 25 days of crawls (`days_with_data`).
+- **The month in progress is included once it has at least 5 days of crawls**, as the last point with
+  `in_progress: true`. Until then the series ends at the last complete month. An in-progress month
+  covers only the days so far and changes daily. Its "stopped" and "without future" figures are
+  measured over a shorter window than a complete month's, so treat them as provisional. The threshold
+  counts days with data, not days elapsed, so missed pipeline days delay it.
+- **A month's crawl list is the union of all its runs.** There are missing days and partial crawls
+  (the 2026-11-04 run lists 141 datasets against the usual 173), and comparing single days would report
+  a dataset as removed because one crawl missed it.
+- `datasets_added` and `datasets_removed` are **`null`** when the month before has no data. With no
+  baseline there is nothing to compare, and reporting all ~180 datasets as "added" in the first
+  month would invent a burst of growth.
+- **A hostname move counts as one removed and one added**, because that is what the catalogue shows.
+  Chelmsford City Sports moving from `leisurecloud.net` to `gs-signature.cloud` (2026-08-23) is a removal
+  in September. This differs on purpose from the feed-health monitors, which follow the feed ids across
+  the move.
+- **Every feed kind counts towards future items, `Slot` included.** The future-decline monitor
+  excludes `Slot`, but many facility-booking datasets publish nothing else. Without them roughly 100
+  datasets a month would read as having no future items.
+- Identities hold: `datasets_with_future + datasets_without_future + datasets_not_ingested =
+  datasets_crawled`; each month's `datasets_crawled` equals the previous month's, minus
+  `datasets_removed`, plus `datasets_added`; and `datasets_stopped_all_runs_failed <= datasets_stopped <=
+  datasets_crawled - datasets_not_ingested`.
+
+### `GET /admin/ecosystem-growth-trend`
+
+One point per calendar month, oldest first, ending with the month in progress when it has 5 days of
+crawls. Months from before the crawl history begins are left out, so the series can be shorter than
+`months`.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page`, `page_size` | `1`, `500` | As every admin list |
+| `months` | `12` | Months to return, counting the month in progress when it is included. Clamped to 1–60 |
+| `as_of` | latest `opportunity_ingestion` day | Treat this day as the latest day of data. Its month is the month in progress, built from the days up to `as_of` only |
+
+Beside every count except `datasets_crawled` and `datasets_with_future` there is a `_list` naming the
+datasets behind it:
+
+| List | Datasets |
+|---|---|
+| `datasets_added_list` | new to the catalogues this month |
+| `datasets_removed_list` | listed last month, no longer listed by any catalogue |
+| `datasets_without_future_list` | no future opportunities on any feed on any day |
+| `datasets_stopped_list` | no updates or deletes all month |
+| `datasets_stopped_all_runs_failed_list` | stopped, with every feed run ending in `ERROR` |
+| `datasets_not_ingested_list` | listed, but not one of its feeds ingested all month |
+
+Each entry carries `dataset_url`, `dataset_name`, `publisher_id` and `publisher_name`, and entries are
+ordered by `dataset_name` then `dataset_url`. A list's length always equals its count, and a list is
+`null` exactly when its count is `null`. `datasets_stopped_all_runs_failed_list` is a subset of
+`datasets_stopped_list`, and `datasets_not_ingested_list` shares no dataset with either
+`datasets_stopped_list` or `datasets_without_future_list`. The whole series, May to November 2026, is about 50 KB.
+
+```json
+{
+  "data": [
+    { "period_start": "2026-07-01", "period_end": "2026-07-31", "in_progress": false,
+      "days_with_data": 31, "days_with_feed_data": 0,
+      "datasets_crawled": 179,
+      "datasets_added": 3, "datasets_added_list": [ … ],
+      "datasets_removed": 5, "datasets_removed_list": [ … ],
+      "datasets_with_future": null,
+      "datasets_without_future": null, "datasets_without_future_list": null,
+      "datasets_stopped": null, "datasets_stopped_list": null,
+      "datasets_stopped_all_runs_failed": null, "datasets_stopped_all_runs_failed_list": null,
+      "datasets_not_ingested": null, "datasets_not_ingested_list": null },
+    { "period_start": "2026-11-01", "period_end": "2026-11-30", "in_progress": true,
+      "days_with_data": 12, "days_with_feed_data": 12,
+      "datasets_crawled": 173,
+      "datasets_added": 0, "datasets_added_list": [],
+      "datasets_removed": 1,
+      "datasets_removed_list": [
+        { "dataset_url": "https://leisuresk.leisurecloud.net/OpenActive/", "dataset_name": "…",
+          "publisher_id": "pub_…", "publisher_name": "…" }
+      ],
+      "datasets_with_future": 149,
+      "datasets_without_future": 18, "datasets_without_future_list": [ … ],
+      "datasets_stopped": 14, "datasets_stopped_list": [ … ],
+      "datasets_stopped_all_runs_failed": 8,
+      "datasets_stopped_all_runs_failed_list": [
+        { "dataset_url": "https://gll-openactive.legendonlineservices.co.uk/OpenActive", "dataset_name": " Sessions and Facilities",
+          "publisher_id": "pub_gll", "publisher_name": "gll" },
+        …
+      ],
+      "datasets_not_ingested": 6,
+      "datasets_not_ingested_list": [
+        { "dataset_url": "https://www.englandsquash.com/openactive", "dataset_name": "England Squash Sessions",
+          "publisher_id": "pub_england-squash", "publisher_name": "England Squash" },
+        …
+      ] }
+  ],
+  "meta": { "snapshot_date": "2026-11-12", "generated_at": "2026-11-12T10:41:03Z", "page": 1, "page_size": 500, "total": 7 }
+}
+```
+
+(Abridged: five of the seven months are omitted, and lists are cut short with `…`.)
+
+`dataset_name` comes from `feed_quality` as stored, falling back to the URL's host when there is none.
+Some stored names are malformed (the Legend datasets' names lack their publisher prefix), and a dataset
+with no `feed_quality` row is named after its host. That applies to the old Chelmsford URL and to
+datasets that have never been ingested.
+
 ## Publisher notifications
 
 Steward work list of publishers that need contacting. Rows live in BigQuery
@@ -1600,8 +1752,8 @@ from `last_assessed` as `feed_quality` does, carries its own `publisher_name` so
 is needed, and is small (397 rows on 2026-09-29), so the endpoint loads every assessed feed and
 decides which to report in C#.
 
-**`opportunity_ingestion` currently holds only ~20 days of history** (from 2026-08-20), with 2026-09-02 missing and
-2026-08-20 duplicated. Consequences worth remembering when reading the numbers:
+**`opportunity_ingestion` holds history only from 2026-08-20** (78 days by 2026-11-11), with 2026-08-20
+duplicated, six days missing (08-21, 09-02, 09-16, 09-20, 09-27, 09-28) and 2026-11-04 a partial crawl. Consequences worth remembering when reading the numbers:
 
 - The 120-day stall lookback is aspirational — it can only see as far back as the table goes.
 - Stall trend points read zero for the first `stall_days` (and `past_threshold_count` for the first
@@ -1642,6 +1794,8 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~FeedQualitySummariserTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~AdminSlugTests"
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~EcosystemGrowthCalculatorTests"
 
 # the Active Places readers and filter — pure, and with no network either
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
@@ -1657,7 +1811,8 @@ section points, but no BigQuery credentials — they read no table.
 
 The detection rules live in `Services/Admin/SingleFeedStallDetector.cs`,
 `Services/Admin/DatasetStallMonitor.cs`, `Services/Admin/FeedIngestionErrorMonitor.cs`,
-`Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, and the
+`Services/Admin/OrphanedChildrenMonitor.cs` and `Services/Admin/DatasetFutureDeclineMonitor.cs`, the
+ecosystem growth rules in `Services/Admin/EcosystemGrowthCalculator.cs`, and the
 summary arithmetic in `Services/Admin/MonitorSummaries.cs` and
 `Services/Admin/FeedQualityMonitor.cs`. The Active Places readers in
 `Services/Admin/ActivePlacesMonitor.cs` are split the same way, with every byte of network handling kept

@@ -28,6 +28,7 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/active-places-coverage",
 		"/admin/publisher-notifications",
 		"/admin/publisher-notifications/summary",
+		"/admin/ecosystem-growth-trend",
 	];
 
 	[Theory]
