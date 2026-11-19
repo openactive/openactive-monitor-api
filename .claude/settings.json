@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__bigquery__list_dataset_ids",
+      "mcp__bigquery__list_table_ids",
+      "mcp__bigquery__get_dataset_info",
+      "mcp__bigquery__get_table_info",
+      "mcp__bigquery__search_catalog"
+    ],
+    "ask": ["mcp__bigquery__execute_sql"],
+    "deny": ["Bash(bq:*)", "Bash(gcloud:*)"]
+  }
+}

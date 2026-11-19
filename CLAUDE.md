@@ -89,6 +89,12 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
 gitignored and must stay that way. Never paste token or credential values into commits, test
 fixtures, docs, or terminal output. `appsettings.json` holds empty placeholder keys only.
 
+## BigQuery
+- API data lives in BigQuery project `openactive-monitor`.
+- Before writing or changing any query or data model, use the `bigquery` MCP tools
+  to check the real table schema. Don't guess column names or types.
+- Access is read-only. Only run SELECT queries, always with a LIMIT.
+
 ## Data caveat
 
 `opportunity_ingestion` holds history only from 2026-08-20 (78 days by 2026-11-11), with six days
