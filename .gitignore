@@ -12,3 +12,5 @@ MonitorApi.Admin.Tests/bin
 MonitorApi.Admin.Tests/obj
 
 *.user
+
+.claude/settings.local.json
