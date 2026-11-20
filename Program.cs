@@ -27,6 +27,16 @@ builder.Services
 builder.Services.AddHttpClient(ActivePlacesSource.HttpClientName);
 builder.Services.AddSingleton<ActivePlacesSource>();
 
+builder.Services
+	.AddOptions<ActivityListOptions>()
+	.BindConfiguration(ActivityListOptions.SectionName);
+
+// /admin/activity-coverage reports only concepts from the OpenActive activity list, which is published
+// as a file rather than held in BigQuery. A singleton for the same reasons as the Active Places source:
+// one parsed copy, and its memoised label matches, shared by every request until the daily refresh.
+builder.Services.AddHttpClient(ActivityVocabularySource.HttpClientName);
+builder.Services.AddSingleton<ActivityVocabularySource>();
+
 builder.Services.AddOutputCache(options =>
 {
 	options.SizeLimit = 100 * 1024 * 1024;       
