@@ -36,6 +36,9 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/publisher-notifications`: steward work list of publishers (BigQuery-backed; not cached)
 - `GET /admin/publisher-notifications/summary`: status/alert counts for that list
 - `GET /admin/ecosystem-growth-trend`: monthly datasets crawled (as the catalogues list them in `feed_ingestion`), added, removed, without future items, stopped publishing and not ingested by the pipeline, each with the list of datasets behind it
+- `GET /admin/activity-coverage`: future opportunities per local authority district per OpenActive activity-list concept, for the coverage map; published labels are matched to the vocabulary with a tunable similarity threshold (optional activity/district/region/country/min_similarity)
+- `GET /admin/activity-coverage/summary`: national activity headline figures — future activity opportunities, % with an activity label, % linked to the activity list, activity-list concepts on offer (optional min_similarity)
+- `GET /admin/activity-coverage/top-activities`: activity-list concepts ranked nationally by future opportunities; top 10 by default (optional min_similarity)
 - `POST /admin/publisher-notifications`: create a row
 - `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
 - `DELETE /admin/publisher-notifications/{id}`: delete a row

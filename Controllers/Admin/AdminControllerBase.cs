@@ -196,6 +196,39 @@ public abstract class AdminControllerBase(IOptions<BigQueryOptions> bigQueryOpti
 			Meta = Meta(snapshotDate, generatedAt, page: 1, pageSize: 1, total: 1),
 		};
 
+	/// <summary>
+	/// Whether an exception means a file this API mirrors over HTTP is unreachable or unreadable, as
+	/// opposed to a fault in this API. Only these become a <c>502</c>; anything else is left to
+	/// propagate.
+	/// </summary>
+	/// <remarks>
+	/// <see cref="TaskCanceledException"/> covers the fetch timing out, which
+	/// <see cref="HttpClient"/> raises rather than a timeout type of its own. A caller who has gone away
+	/// cancels the request too, but the response is discarded in that case whatever it says.
+	/// </remarks>
+	protected static bool IsUpstreamFailure(Exception e) =>
+		e is HttpRequestException or TaskCanceledException or InvalidDataException;
+
+	/// <summary>
+	/// The failure the dashboard sees when an upstream file cannot be served: a <c>502</c> carrying
+	/// the same <c>message</c> shape as the auth failure, so one error handler covers both.
+	/// </summary>
+	/// <remarks>
+	/// A gateway failure and not a <c>500</c>: nothing is wrong with this API, and the distinction tells
+	/// the dashboard the answer may well be there on a retry. The exception message is included because
+	/// the surface is token-gated and the URLs it can name are public configuration, not secrets.
+	///
+	/// Not cached: the output cache stores <c>200</c> responses only, so a failure now does not deny the
+	/// dashboard the data for the rest of the day.
+	/// </remarks>
+	/// <param name="what">What could not be served, as the start of a sentence, e.g. <c>The activity list</c>.</param>
+	/// <param name="e">The upstream failure.</param>
+	protected static ObjectResult Unavailable(string what, Exception e) =>
+		new(new { message = $"{what} is currently unavailable: {e.Message}" })
+		{
+			StatusCode = StatusCodes.Status502BadGateway,
+		};
+
 	private static AdminPageMeta Meta(DateOnly snapshotDate, DateTime? generatedAt, int page, int pageSize, int total)
 	{
 		// Read the clock once: truncating with two separate DateTime.UtcNow reads can straddle a tick
