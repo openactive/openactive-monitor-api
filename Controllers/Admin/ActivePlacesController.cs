@@ -217,34 +217,11 @@ public class ActivePlacesController(
 	#region Utilities
 
 	/// <summary>
-	/// Whether an exception is the published report being unreachable or unreadable, as opposed to a
-	/// fault in this API. Only these become a <c>502</c>; anything else is left to propagate.
+	/// The <c>502</c> both endpoints answer when the published report cannot be served. The handling
+	/// itself is shared with every admin endpoint that mirrors a file; see
+	/// <see cref="AdminControllerBase.Unavailable(string, Exception)"/>.
 	/// </summary>
-	/// <remarks>
-	/// <see cref="TaskCanceledException"/> covers the fetch timing out, which
-	/// <see cref="HttpClient"/> raises rather than a timeout type of its own. A caller who has gone away
-	/// cancels the request too, but the response is discarded in that case whatever it says.
-	/// </remarks>
-	private static bool IsUpstreamFailure(Exception e) =>
-		e is HttpRequestException or TaskCanceledException or InvalidDataException;
-
-	/// <summary>
-	/// The failure the dashboard sees when the upstream report cannot be served: a <c>502</c> carrying
-	/// the same <c>message</c> shape as the auth failure, so one error handler covers both.
-	/// </summary>
-	/// <remarks>
-	/// A gateway failure and not a <c>500</c>: nothing is wrong with this API, and the distinction tells
-	/// the dashboard the answer may well be there on a retry. The exception message is included because
-	/// the surface is token-gated and the URL it names is public configuration, not a secret.
-	///
-	/// Not cached: the output cache stores <c>200</c> responses only, so a failure now does not deny the
-	/// dashboard the report for the rest of the day.
-	/// </remarks>
-	private ObjectResult Unavailable(Exception e) =>
-		new(new { message = "The Active Places coverage report is currently unavailable: " + e.Message })
-		{
-			StatusCode = StatusCodes.Status502BadGateway,
-		};
+	private static ObjectResult Unavailable(Exception e) => Unavailable("The Active Places coverage report", e);
 
 	/// <summary>Hydrates one published pair into the dashboard payload.</summary>
 	private static ActivePlacesSiteMappingRow ToRow(ActivePlacesSiteMapping mapping) =>

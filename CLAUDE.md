@@ -4,8 +4,9 @@
 
 ASP.NET Core (net10.0) Web API that serves the OpenActive public dashboards by querying a
 Google BigQuery analytics dataset. There is no database of its own and no ORM — every endpoint
-builds a SQL string and runs it against BigQuery. The one exception is the two `/admin/active-places-*`
-endpoints, which mirror two files published by the Active Places coverage analysis over HTTP.
+builds a SQL string and runs it against BigQuery. The exceptions are the two `/admin/active-places-*`
+endpoints, which mirror two files published by the Active Places coverage analysis over HTTP, and
+`/admin/activity-coverage`, which also reads the OpenActive activity list over HTTP to match labels.
 
 Deployed to Azure App Service from `main` (`.github/workflows/CD.yml`); PRs run the integration
 test suite (`.github/workflows/CI.yml`).

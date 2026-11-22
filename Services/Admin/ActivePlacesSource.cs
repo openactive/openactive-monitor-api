@@ -6,7 +6,8 @@ namespace MonitorApi.Services.Admin;
 /// Fetches the two published Active Places files and holds them until the next daily refresh.
 /// </summary>
 /// <remarks>
-/// The one thing in <c>Services/Admin</c> that is not pure, and deliberately the only one: the readers
+/// One of only two things in <c>Services/Admin</c> that are not pure (the other is
+/// <see cref="ActivityVocabularySource"/>, built the same way), and deliberately so: the readers
 /// in <c>ActivePlacesMonitor.cs</c> stay testable from a string literal because every byte of network
 /// handling is here instead. It touches no ASP.NET type either — the controller turns a failure into a
 /// status code.

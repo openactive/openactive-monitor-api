@@ -1684,11 +1684,183 @@ The UI can send only the fields it edits; the API accepts a full body. Returns `
 
 Remove a row. Returns `204` when deleted, `404` if the id is missing.
 
+## Activity coverage
+
+Not a monitor: a coverage map. For each local authority district, it gives the number of **future**
+opportunities offered for each activity in the
+[OpenActive activity list](https://openactive.io/activity-list/activity-list.jsonld). Two companion
+endpoints give national figures from the same data and matching: `summary` (headline statistics) and
+`top-activities` (the national ranking). There is no `as_of`, no trend and no tile on
+`/admin/summary`.
+
+### `GET /admin/activity-coverage`
+
+One row per (district, activity) with at least one future opportunity. Rows are ordered by
+`activity`, then `opportunity_count` (largest first), then `district_code`.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page`, `page_size` | `1`, `500` | Standard paging; `page_size` capped at `1000` |
+| `activity` | — | Activities to return, each as the concept's label in any case (`swimming`) or its `@id`. Repeat or comma-separate; values are OR'd. A value that names no concept matches nothing. |
+| `district`, `region`, `country` | — | ONS codes. Repeat or comma-separate. The three are OR'd together as one location filter. |
+| `min_similarity` | `0.85` | Lowest label-match score accepted, `0`–`1` (clamped). `1` accepts exact matches only. |
+
+```json
+{
+  "data": [
+    {
+      "district_code": "E08000003",
+      "district_name": "Manchester",
+      "region_code": "E12000002",
+      "region_name": "North West",
+      "country_code": "E92000001",
+      "country_name": "England",
+      "activity": "Swimming",
+      "activity_id": "https://openactive.io/activity-list#2750229d-b725-4171-9276-376be913957c",
+      "opportunity_count": 2350
+    }
+  ],
+  "meta": { "snapshot_date": "2026-11-20", "generated_at": "2026-11-20T10:12:03Z", "page": 1, "page_size": 500, "total": 5114 }
+}
+```
+
+**Source.** The endpoint reads `active_opportunities_summary`. The pipeline rebuilds this table every
+night and limits it to future opportunities (start date on or after the build day). Its activity
+counts match `opportunities` exactly for non-Slot, non-facility kinds with a district set. Only
+activity rows are read (`is_activity = TRUE`), so facility bookings (Slot, FacilityUse) are excluded.
+`meta.snapshot_date` is the latest `opportunity_ingestion` day, as on the monitors, because that run
+rebuilt the summary.
+
+**Matching labels to the activity list.** Publishers write activity labels as free text. Each label
+is matched to one concept and reported under the concept's canonical `prefLabel` and `@id`, so
+"Swimming", "Lane Swimming" and "public swimming" all land in one Swimming row.
+
+1. **Normalise both sides.** Lowercase; strip accents, ™ and ®; read `&` as "and"; drop bracketed
+   asides such as "(8-15yrs)"; turn punctuation into spaces.
+2. **Score every concept and keep the best.**
+   - **1.0** when they are equal, or equal ignoring spaces: "body pump" → Bodypump™, "zumba" →
+     Zumba®, "crèche" → Creche.
+   - **0.9** when every word of the concept appears in the label, in any order: "lane swimming" →
+     Swimming, "squash booking" → Squash, "les mills sprint" → Sprint®. When several concepts qualify,
+     the one with the most words wins: "pilates - reformer - beginner" → Reformer Pilates.
+   - **Dice similarity** over letter pairs, for typos and reordered words: "mind, body and soul" →
+     Body Mind and Soul.
+3. **Accept the best concept if its score is at least `min_similarity`.**
+
+A few single-word concepts that are also everyday words are **excluded from the 0.9 rule**: Pool,
+Air, Bounce, Burn, Freestyle, Racing, Commercial, Modern, Urban, House, Funk, Latin, Jazz, Tap,
+Swing, Extend, Nova, Fierce and Eton. So "learner pool" is not counted as the cue sport. A label
+that *is* one of these words still matches it exactly.
+
+**Why the default threshold is 0.85.** It was chosen against the live labels. Every candidate scoring
+0.85 or more was correct, and the best-scoring wrong candidates sat just below it: "mind and body" →
+Body Mind and Soul at 0.83, "swimming sessions" → *Swimming Lessons* and "dance fit" → *Popdance Fit*
+at about 0.82. The last two still resolve correctly, to Swimming and Dance, through the 0.9 rule.
+Against exact matching (`min_similarity=1`), the default added about 6% more opportunities on
+2026-11-20, and Swimming gained the most.
+
+Things to know when reading the numbers:
+
+- **An opportunity counts once per activity.** A group labelled "Swimming" and "Lane Swimming" adds to
+  Swimming once. One labelled "Swimming" and "Aqua Fit" adds to both, so the sum across activities is
+  more than the number of distinct opportunities. Aggregation happens in C# rather than SQL for this
+  reason: only after matching is it known that two labels are the same concept.
+- **Free text that matches no concept is dropped.** "Gym Session", "Fitness Classes", "Health Suite",
+  "Leisure Swim" and similar labels are about 17% of labelled volume. There is no rollup to `broader`
+  concepts.
+- **Opportunities with no activity label are not counted.** That is about a third of future activity
+  opportunities on 2026-11-20. Sessions often inherit their activity from a parent event, and the
+  pipeline resolves embedded parents and grandparents but not yet parents referenced by URL. Some rows
+  ingested before the grandparent fix still lack labels too. Treat counts as a lower bound, and a low
+  count as "little published data" rather than proof of little provision.
+- **The label "pool" maps to Pool, the cue sport,** although in session data it usually means a
+  swimming pool. That is the vocabulary's label, and an exact match.
+- **Rows are sparse.** A district with no opportunities for an activity has no row. Fill the gaps
+  against your own district list. `socio_data` holds all 361 UK districts with populations, if you
+  want per-capita figures.
+
+The activity list is fetched from `ActivityList:Url` (default the published JSON-LD) and held until
+the next 07:00 UTC refresh, like the Active Places files. When it cannot be fetched or read, the
+endpoint answers `502` with a `message`.
+
+### `GET /admin/activity-coverage/summary`
+
+National headline figures for the dashboard, as one object in the single-document envelope.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `min_similarity` | `0.85` | As above. Affects `linked_*` and `activities_offered` only. |
+
+```json
+{
+  "data": {
+    "activity_opportunities": 675217,
+    "labelled_opportunities": 446696,
+    "labelled_percentage": 66.2,
+    "linked_opportunities": 365471,
+    "linked_percentage": 54.1,
+    "activities_offered": 285,
+    "vocabulary_size": 768
+  },
+  "meta": { "snapshot_date": "2026-11-20", "generated_at": "2026-11-20T10:12:03Z", "page": 1, "page_size": 1, "total": 1 }
+}
+```
+
+- **`activity_opportunities`**: every future activity opportunity in the summary, with or without a
+  label. Facility bookings are excluded.
+- **`labelled_*`**: opportunities publishing at least one activity label.
+- **`linked_*`**: opportunities with at least one label matched to the activity list at
+  `min_similarity`, by the rules above.
+- **`activities_offered`**: distinct activity-list concepts with at least one future opportunity, out
+  of `vocabulary_size`. It equals `meta.total` on `top-activities` at the same threshold.
+
+Both percentages are of `activity_opportunities`, so `linked_percentage ≤ labelled_percentage`. They
+are rounded to one decimal place, and `null` when there are no activity opportunities.
+
+**Each opportunity counts once** here, however many activities it carries. The summary groups
+opportunities by their label set, so "has a linked activity" is decided per group. The map and
+`top-activities` count an opportunity under each of its activities, so their totals are larger than
+`linked_opportunities`.
+
+### `GET /admin/activity-coverage/top-activities`
+
+Activity-list concepts ranked nationally by future opportunities, largest first, then by `activity`.
+The default page size is 10, so a plain call returns the top 10. Later pages continue the ranking.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `page`, `page_size` | `1`, `10` | Standard paging; `page_size` capped at `1000` |
+| `min_similarity` | `0.85` | As above. |
+
+```json
+{
+  "data": [
+    {
+      "rank": 1,
+      "activity": "Swimming",
+      "activity_id": "https://openactive.io/activity-list#2750229d-b725-4171-9276-376be913957c",
+      "opportunity_count": 146659,
+      "district_count": 172
+    }
+  ],
+  "meta": { "snapshot_date": "2026-11-20", "generated_at": "2026-11-20T10:12:03Z", "page": 1, "page_size": 10, "total": 285 }
+}
+```
+
+- **`rank`** is the 1-based position in the whole ranking, not on the page. Equal counts take
+  consecutive ranks, ordered by `activity`.
+- **`opportunity_count`** follows the map's counting rule, so it equals the sum of the concept's
+  `/admin/activity-coverage` rows. **`district_count`** equals how many rows it has there.
+- Activities only. Facility bookings, unmatched free text and unlabelled opportunities are not
+  ranked, as on the map.
+
 ## Source data
 
 Everything below describes the BigQuery-backed endpoints. The two
 [Active Places](#active-places-coverage) endpoints read no table at all — they mirror two files
 published by the analysis job, as that section explains.
+[Activity coverage](#activity-coverage) reads `active_opportunities_summary` and also mirrors one
+file, the OpenActive activity list.
 
 The feed-health monitors read `opportunity_ingestion` (daily ingestion result per feed), joined to
 `feeds` for descriptive fields and `feed_quality` for the score. The two stall monitors read exactly
