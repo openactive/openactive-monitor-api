@@ -81,6 +81,18 @@ public sealed class FeedQualityRow
 	/// </summary>
 	public required JsonElement? MissingRequiredFields { get; init; }
 
+	/// <summary>
+	/// How well the feed's activity values match the OpenActive Activity List, passed through exactly as stored.
+	/// See <see cref="Warnings"/>.
+	/// </summary>
+	public required JsonElement? ActivityVocabularyAdherence { get; init; }
+
+	/// <summary>
+	/// The same for the feed's facility types, against the OpenActive Facility Types list.
+	/// See <see cref="Warnings"/>.
+	/// </summary>
+	public required JsonElement? FacilityVocabularyAdherence { get; init; }
+
 	/// <summary>When this feed was assessed. UTC. Not necessarily <c>meta.snapshot_date</c>: that is the latest across all feeds.</summary>
 	public required DateTime? LastAssessed { get; init; }
 }

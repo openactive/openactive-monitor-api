@@ -889,10 +889,11 @@ The rules worth knowing:
 - **`null` is never zero.** Every field but `feed_id` and `dataset_url` is nullable because every
   column but those two is, and `null` always means the assessment did not report the value. A stored
   `0` is a real measurement.
-- **The JSON columns are passed through exactly as stored.** `warnings`, `errors` and
-  `missing_required_fields` are the assessor's shape, not this API's. Nothing counts, parses or
-  aggregates them, and no summary figure is derived from them — `summary.feeds_with_errors` counts
-  feeds whose `status` is `ERROR`, which is not the same thing.
+- **The JSON columns are passed through exactly as stored.** `warnings`, `errors`,
+  `missing_required_fields`, `activity_vocabulary_adherence` and`facility_vocabulary_adherence` 
+  are the assessor's shape, not this API's. Nothing counts, parses or aggregates them, and no 
+  summary figure is derived from them — `summary.feeds_with_errors` counts feeds whose `status` 
+  is `ERROR`, which is not the same thing.
 - **Filters combine as they do across the API.** Values within one parameter are OR'd, different
   parameters are AND'd. `publisher` is resolved through `feeds`, which is where publisher identity
   lives; `feed_quality` has no publisher column, and a feed whose dataset has no `feeds` row has no
@@ -941,6 +942,11 @@ endpoint. And the row carries no `monitor_id`, `first_detected`, `days_open`, `c
       "warnings": [],
       "errors": [],
       "missing_required_fields": {},
+      "activity_vocabulary_adherence": null,
+      "facility_vocabulary_adherence": {
+        "adherence_pct": 100.0, "items": 48, "valid_id": 48, "invalid_id": 0,
+        "other_scheme": 0, "label_match_only": 0, "unrecognised": 0, "top_unmatched": []
+      },
       "last_assessed": "2026-09-15T01:56:24.156787Z"
     },
     {
@@ -971,6 +977,11 @@ endpoint. And the row carries no `monitor_id`, `first_detected`, `days_open`, `c
       "warnings": ["No future opportunities scheduled"],
       "errors": ["Data parsing error (invalid JSON or missing 'items')"],
       "missing_required_fields": { "FacilityUse": ["activity"] },
+      "activity_vocabulary_adherence": null,
+      "facility_vocabulary_adherence": {
+        "adherence_pct": 91.3, "items": 23, "valid_id": 21, "invalid_id": 1,
+        "other_scheme": 0, "label_match_only": 1, "unrecognised": 0, "top_unmatched": []
+      },
       "last_assessed": "2026-09-15T01:56:24.156787Z"
     }
   ],

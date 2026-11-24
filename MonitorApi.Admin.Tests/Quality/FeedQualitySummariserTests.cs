@@ -45,7 +45,9 @@ public class FeedQualitySummariserTests
 			completeness ?? FeedQualityCompletenessValues.None,
 			Warnings: null,
 			Errors: null,
-			MissingRequiredFields: null);
+			MissingRequiredFields: null,
+			ActivityVocabularyAdherence: null,
+			FacilityVocabularyAdherence: null);
 
 	/// <summary>Completeness percentages (0–100) in the order <c>Columns</c> presents them; omitted ones are unmeasured.</summary>
 	private static FeedQualityCompletenessValues Completeness(

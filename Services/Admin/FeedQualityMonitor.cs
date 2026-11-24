@@ -40,6 +40,8 @@ namespace MonitorApi.Services.Admin;
 /// <param name="Warnings">Raw <c>warnings</c> JSON, passed through exactly as stored.</param>
 /// <param name="Errors">Raw <c>errors</c> JSON, passed through exactly as stored.</param>
 /// <param name="MissingRequiredFields">Raw <c>missing_required_fields</c> JSON, passed through exactly as stored.</param>
+/// <param name="ActivityVocabularyAdherence">Raw <c>activity_vocabulary_adherence</c> JSON, passed through exactly as stored.</param>
+/// <param name="FacilityVocabularyAdherence">Raw <c>facility_vocabulary_adherence</c> JSON, passed through exactly as stored.</param>
 public sealed record FeedQuality(
 	string FeedId,
 	string DatasetUrl,
@@ -57,7 +59,9 @@ public sealed record FeedQuality(
 	FeedQualityCompletenessValues Completeness,
 	JsonElement? Warnings,
 	JsonElement? Errors,
-	JsonElement? MissingRequiredFields);
+	JsonElement? MissingRequiredFields,
+	JsonElement? ActivityVocabularyAdherence,
+	JsonElement? FacilityVocabularyAdherence);
 
 /// <summary>
 /// The nine completeness figures a feed assessment reports, each the percentage of the feed's items
@@ -430,6 +434,8 @@ internal static class FeedQualityQuery
 			       q.level_completeness,
 			       q.accessibility_support_completeness,
 			       q.gender_restriction_completeness,
+			       q.activity_vocabulary_adherence,
+			       q.facility_vocabulary_adherence,
 			       q.num_future_opportunity_items,
 			       q.grade,
 			       q.feed_version,
@@ -505,7 +511,9 @@ internal static class FeedQualityQuery
 				BigQueryValueParser.AsDouble(row.GetValueOrDefault("gender_restriction_completeness"))),
 			BigQueryValueParser.ParseJson(row.GetValueOrDefault("warnings")),
 			BigQueryValueParser.ParseJson(row.GetValueOrDefault("errors")),
-			BigQueryValueParser.ParseJson(row.GetValueOrDefault("missing_required_fields")));
+			BigQueryValueParser.ParseJson(row.GetValueOrDefault("missing_required_fields")),
+			BigQueryValueParser.ParseJson(row.GetValueOrDefault("activity_vocabulary_adherence")),
+			BigQueryValueParser.ParseJson(row.GetValueOrDefault("facility_vocabulary_adherence")));
 
 	/// <summary>
 	/// Reads the snapshot date from <see cref="SnapshotDateSql"/>, or <c>null</c> for an empty table.
