@@ -145,34 +145,6 @@ the `API_ADMIN_TOKEN` secret in addition to the existing ones.
 
 ## BigQuery MCP for Claude Code
 
-The repo ships a read-only BigQuery MCP server for Claude Code (`.mcp.json`, permissions in
-`.claude/settings.json`). It runs as a shared read-only service account, so it never uses your personal
-Google login. To use it on your laptop:
-
-1. Ask a project maintainer to grant your Google account access to the agent service account, and to
-   send you the service account's email address.
-
-2. Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), [Node.js](https://nodejs.org/)
-   (for `npx`) and Claude Code.
-
-3. Create the agent's credentials. This opens a browser to sign in with your own account; the saved
-   credentials can only act as the read-only service account, and your normal `gcloud` login is unchanged:
-
-   ```bash
-   CLOUDSDK_CONFIG="$HOME/.config/gcloud-agent-bq" \
-     gcloud auth application-default login \
-     --impersonate-service-account=<service-account-email>
-   ```
-
-   The file is saved under `~/.config/gcloud-agent-bq/`, which is where `.mcp.json` looks for it.
-
-4. Open the repo in Claude Code and approve the `bigquery` server when prompted.
-
-5. Run `/mcp` inside Claude Code and check that `bigquery` shows as connected.
-
-6. Test with a prompt: `List the datasets in openactive-monitor and show me the schema of one table.`
-
-If you approved or rejected the server by mistake, run `claude mcp reset-project-choices` and restart
-Claude Code. A permission error in step 3 usually means your access hasn't been granted yet or hasn't
-taken effect — wait a few minutes and retry. On Windows, if `${HOME}` isn't set, set a `HOME`
-environment variable so the path in `.mcp.json` resolves.
+The repo ships a read-only BigQuery MCP server for Claude Code. Setup, plus how maintainers grant and
+revoke access, is in [bigquery-mcp.md](bigquery-mcp.md). The dataset's schema is snapshotted in
+[bigquery-schema.md](bigquery-schema.md).

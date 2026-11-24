@@ -1,14 +1,28 @@
 {
   "permissions": {
     "allow": [
-      "mcp__bigquery__list_dataset_ids",
-      "mcp__bigquery__list_table_ids",
-      "mcp__bigquery__get_dataset_info",
-      "mcp__bigquery__get_table_info",
-      "mcp__bigquery__search_catalog",
       "mcp__bigquery__execute_sql"
     ],
     "ask": ["mcp__bigquery__execute_sql"],
-    "deny": ["Bash(bq:*)", "Bash(gcloud:*)"]
+    "deny": [
+      "mcp__bigquery__analyze_contribution",
+      "mcp__bigquery__ask_data_insights",
+      "mcp__bigquery__forecast",
+      "Bash(bq:*)",
+      "Bash(gcloud:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__bigquery__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bigquery-guard.mjs\""
+          }
+        ]
+      }
+    ]
   }
 }

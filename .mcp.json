@@ -2,9 +2,10 @@
   "mcpServers": {
     "bigquery": {
       "command": "npx",
-      "args": ["-y", "@toolbox-sdk/server", "--prebuilt", "bigquery", "--stdio"],
+      "args": ["-y", "@toolbox-sdk/server@1.18.0", "--prebuilt", "bigquery", "--stdio"],
       "env": {
         "BIGQUERY_PROJECT": "openactive-monitor",
+        "BIGQUERY_WRITE_MODE": "blocked",
         "GOOGLE_APPLICATION_CREDENTIALS": "${HOME}/.config/gcloud-agent-bq/application_default_credentials.json"
       }
     }

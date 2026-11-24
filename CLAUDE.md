@@ -45,6 +45,8 @@ Do not merge the two, and do not refactor `ApiController` while adding admin end
 | `MonitorApi.Tests/` | Analytics integration tests against live BigQuery |
 | `MonitorApi.Admin.Tests/` | Admin tests: pure rule tests (no credentials) + endpoint tests |
 | `docs/development.md`, `docs/admin-api.md` | Endpoint lists and semantics — keep in sync with code |
+| `docs/bigquery-schema.md` | Snapshot of every BigQuery table's schema — read this before querying the MCP |
+| `docs/bigquery-mcp.md` | BigQuery MCP setup for Claude Code, and granting/revoking user access |
 
 ## Key conventions
 
@@ -92,9 +94,16 @@ fixtures, docs, or terminal output. `appsettings.json` holds empty placeholder k
 
 ## BigQuery
 - API data lives in BigQuery project `openactive-monitor`.
-- Before writing or changing any query or data model, use the `bigquery` MCP tools
-  to check the real table schema. Don't guess column names or types.
-- Access is read-only. Only run SELECT queries, always with a LIMIT.
+- Before writing or changing any query or data model, check the schema in
+  `docs/bigquery-schema.md` (columns, types, nullability, partitioning, join keys, observed values).
+  Don't guess column names or types. The MCP's schema tools (`get_table_info`, `list_table_ids`, …)
+  are blocked by a hook that points back to that file. If the file lacks a table or column, or
+  BigQuery rejects a column it lists, the file is stale: regenerate it with the `INFORMATION_SCHEMA`
+  queries at its end, via `execute_sql`.
+- Access is read-only. Only run SELECT queries, always with a LIMIT. This is enforced:
+  `.claude/hooks/bigquery-guard.mjs` blocks anything but a single `SELECT`/`WITH` statement and every
+  bigquery tool other than `execute_sql`, the server runs with `BIGQUERY_WRITE_MODE=blocked`, and the
+  service account is read-only. Don't try to work around a block. Rewrite the query.
 
 ## Data caveat
 
