@@ -208,6 +208,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("feed_version", quality);
 		Assert.Contains("num_future_opportunity_items", quality);
 		Assert.Contains("missing_required_fields", quality);
+		Assert.Contains("activity_vocabulary_adherence", quality);
+		Assert.Contains("facility_vocabulary_adherence", quality);
 		Assert.Contains("last_assessed", quality);
 
 		// Not an incident: feed_quality holds current state, so the monitor spine is absent rather than

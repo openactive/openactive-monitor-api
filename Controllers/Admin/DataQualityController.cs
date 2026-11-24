@@ -198,6 +198,8 @@ public class DataQualityController(IOptions<BigQueryOptions> bigQueryOptions, IO
 			Warnings = feed.Warnings,
 			Errors = feed.Errors,
 			MissingRequiredFields = feed.MissingRequiredFields,
+			ActivityVocabularyAdherence = feed.ActivityVocabularyAdherence,
+			FacilityVocabularyAdherence = feed.FacilityVocabularyAdherence,
 			LastAssessed = feed.LastAssessed,
 		};
 	}
