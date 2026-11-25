@@ -76,9 +76,17 @@ public sealed class CatalogRequestSummary
 	public required double? MedianFirstContactHours { get; init; }
 
 	/// <summary>
-	/// Median hours to merge or close, across requests that are finished. <c>null</c> when none are.
+	/// Median hours from opening to merge, across merged requests only: how long an accepted dataset
+	/// took to reach the catalog. <c>null</c> when none are merged.
 	/// </summary>
-	public required double? MedianCompletionHours { get; init; }
+	public required double? MedianMergeHours { get; init; }
+
+	/// <summary>
+	/// Median hours from opening to close, across requests closed without merging only. Kept apart
+	/// from <see cref="MedianMergeHours"/> because a close usually means the request was not accepted
+	/// (or was withdrawn or resubmitted). <c>null</c> when none are closed.
+	/// </summary>
+	public required double? MedianCloseHours { get; init; }
 }
 
 /// <summary>One issue raised by someone other than a steward on an OpenActive tooling repository.</summary>

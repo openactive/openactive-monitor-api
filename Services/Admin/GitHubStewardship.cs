@@ -58,7 +58,8 @@ public sealed record CatalogRequestFigures(
 	int Closed,
 	int AwaitingFirstContact,
 	double? MedianFirstContactHours,
-	double? MedianCompletionHours);
+	double? MedianMergeHours,
+	double? MedianCloseHours);
 
 /// <summary>
 /// The rules for dataset addition requests: which pull requests count, and how quickly the stewards
@@ -103,7 +104,9 @@ public static class CatalogRequests
 			Closed: requests.Count(r => r.Status == CatalogRequestStatus.Closed),
 			AwaitingFirstContact: requests.Count(r => r.Status == CatalogRequestStatus.Open && r.FirstContactAt is null),
 			MedianFirstContactHours: Median(requests.Select(r => r.FirstContactHours)),
-			MedianCompletionHours: Median(requests.Select(r => r.CompletionHours)));
+			// Merged and closed mean opposite outcomes, so their times are never pooled.
+			MedianMergeHours: Median(requests.Where(r => r.Status == CatalogRequestStatus.Merged).Select(r => r.CompletionHours)),
+			MedianCloseHours: Median(requests.Where(r => r.Status == CatalogRequestStatus.Closed).Select(r => r.CompletionHours)));
 
 	/// <summary>Keeps the requests in any of <paramref name="statuses"/>, matched ignoring case. Empty keeps all.</summary>
 	public static List<CatalogRequest> Filter(IEnumerable<CatalogRequest> requests, IReadOnlyCollection<string> statuses)

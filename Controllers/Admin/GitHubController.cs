@@ -96,7 +96,8 @@ public class GitHubController(
 			Closed = figures.Closed,
 			AwaitingFirstContact = figures.AwaitingFirstContact,
 			MedianFirstContactHours = figures.MedianFirstContactHours,
-			MedianCompletionHours = figures.MedianCompletionHours,
+			MedianMergeHours = figures.MedianMergeHours,
+			MedianCloseHours = figures.MedianCloseHours,
 		};
 
 		var rows = requests.Select(r => new CatalogRequestRow

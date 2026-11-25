@@ -72,6 +72,10 @@ public class GitHubEndpointTests(AdminApiFixture fixture) : IClassFixture<AdminA
 		Assert.InRange(summary.AwaitingFirstContact, 0, summary.Open);
 		Assert.Equal(page.Data.Count(r => r.Status == "open"), summary.Open);
 		Assert.Equal(page.Data.Count(r => r.Status == "merged"), summary.Merged);
+
+		// Each median covers only its own outcome, so it exists exactly when that outcome does.
+		Assert.Equal(summary.Merged > 0, summary.MedianMergeHours is not null);
+		Assert.Equal(summary.Closed > 0, summary.MedianCloseHours is not null);
 	}
 
 	[Fact]

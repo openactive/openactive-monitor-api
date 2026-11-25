@@ -165,18 +165,22 @@ public class CatalogRequestsTests
 			Pr(2, interactions: [new("steward-a", Opened.AddHours(4))]), // open, replied
 			Pr(3, mergedAt: Opened.AddHours(10), interactions: [new("steward-a", Opened.AddHours(1))]),
 			Pr(4, closedAt: Opened.AddHours(20), interactions: [new("steward-b", Opened.AddHours(3))]),
+			Pr(5, mergedAt: Opened.AddHours(30)),
+			Pr(6, closedAt: Opened.AddHours(2)),
+			Pr(7, closedAt: Opened.AddHours(5)),
 		], Stewards, Cutoff);
 
 		var figures = CatalogRequests.Summarise(requests);
 
 		Assert.Equal(new CatalogRequestFigures(
-			Total: 4,
+			Total: 7,
 			Open: 2,
-			Merged: 1,
-			Closed: 1,
+			Merged: 2,
+			Closed: 3,
 			AwaitingFirstContact: 1,
 			MedianFirstContactHours: 3.0, // 1, 3, 4
-			MedianCompletionHours: 15.0), // 10, 20
+			MedianMergeHours: 20.0,       // 10, 30 — merged only
+			MedianCloseHours: 5.0),       // 2, 5, 20 — closed only; pooled with merged it would be 10
 			figures);
 	}
 
@@ -187,7 +191,8 @@ public class CatalogRequestsTests
 
 		Assert.Equal(0, figures.Total);
 		Assert.Null(figures.MedianFirstContactHours);
-		Assert.Null(figures.MedianCompletionHours);
+		Assert.Null(figures.MedianMergeHours);
+		Assert.Null(figures.MedianCloseHours);
 	}
 
 	[Theory]

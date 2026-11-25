@@ -1934,7 +1934,7 @@ matched.
   ],
   "summary": {
     "total": 4, "open": 2, "merged": 1, "closed": 1, "awaiting_first_contact": 0,
-    "median_first_contact_hours": 45.7, "median_completion_hours": 178.4
+    "median_first_contact_hours": 45.7, "median_merge_hours": 356.4, "median_close_hours": 0.4
   },
   "meta": { "snapshot_date": "2026-11-24", "generated_at": "2026-11-24T10:29:41Z", "page": 1, "page_size": 500, "total": 4 }
 }
