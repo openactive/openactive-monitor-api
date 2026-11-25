@@ -46,6 +46,8 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/activity-coverage", paths);
 		Assert.Contains("/admin/activity-coverage/summary", paths);
 		Assert.Contains("/admin/activity-coverage/top-activities", paths);
+		Assert.Contains("/admin/catalog-requests", paths);
+		Assert.Contains("/admin/tooling-issues", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -68,6 +70,9 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	// Not a monitor and not from BigQuery: the analysis publishes one run at a time, so there is no
 	// as_of and no threshold to tune — only paging and the four identity filters.
 	[InlineData("/admin/active-places-site-mappings", "page,page_size,site_id,local_authority_code,publisher,match_method")]
+	// Not monitors and not from BigQuery: GitHub is read as it stands today, so no as_of either.
+	[InlineData("/admin/catalog-requests", "page,page_size,status")]
+	[InlineData("/admin/tooling-issues", "page,page_size,repo,status")]
 	[InlineData("/admin/publisher-notifications", "page,page_size")]
 	// Current state only, so no as_of: paging, the activity and location filters, and the match threshold.
 	[InlineData("/admin/activity-coverage", "page,page_size,activity,district,region,country,min_similarity")]

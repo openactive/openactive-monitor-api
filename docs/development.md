@@ -14,6 +14,19 @@ Install [.NET](https://dotnet.microsoft.com/en-us/download)
    — the admin endpoints refuse every request when `AdminToken` is empty, and the admin test suite
    fails fast with a message telling you so.
 
+   For the GitHub endpoints (`/admin/catalog-requests`, `/admin/tooling-issues`), add the steward list.
+   It is a secret, so it goes here and never in `appsettings.json`. No GitHub token is needed: the
+   repositories are public and are read anonymously.
+
+   ```json
+   "GitHub": {
+     "Stewards": [ { "Login": "<github login>", "Name": "<display name>" } ]
+   }
+   ```
+
+   `Stewards` is optional. Without it the endpoints still answer, but every author counts as
+   community and no PR shows a first-contact time.
+
 3. Update the `Credentials` value in `appsettings.Development.json` to point to the credentials file path.
 
    Alternatively, you can provide the encoded JSON content directly in the `Credentials` setting.
@@ -141,7 +154,8 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj  # /admin endpo
 ```
 
 CI writes `appsettings.Development.json` from repository secrets and runs both. The admin suite needs
-the `API_ADMIN_TOKEN` secret in addition to the existing ones.
+the `API_ADMIN_TOKEN` secret in addition to the existing ones, and the GitHub endpoints read
+`GH_STEWARDS_JSON` (the steward list as a JSON array; optional, an empty list is used without it).
 
 ## BigQuery MCP for Claude Code
 
