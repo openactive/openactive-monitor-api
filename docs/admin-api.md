@@ -1985,6 +1985,78 @@ Issues (never pull requests) opened by the community on the tooling repositories
 }
 ```
 
+## Metric snapshots
+
+The only endpoint on this surface whose rows are a **history**. Everything else reports current
+state, because the tables behind it hold current state only — `feed_quality`, `opportunities` and
+`active_opportunities_summary` are each overwritten in place. The measures defined as a trend
+therefore have nothing to read, and this is where a month-by-month series is kept so that they do.
+
+Rows live in BigQuery `metric_snapshots`, one per `(period, source, field)`. These routes are **not**
+output-cached: the capture job writes and reads back in one run.
+
+**A period that is never captured cannot be recovered afterwards.** There is no way to reconstruct
+last month's figure from today's tables.
+
+### What a row holds
+
+A row is a **source field, not a finished measure**. `completeness_location` is a row; a KPI computed
+from nine of those is not. Measures are computed when the report is produced, so one whose definition
+changes later can be recomputed for every period already captured. Storing the finished percentage
+would freeze today's definition into the history instead.
+
+| Field | Meaning |
+|---|---|
+| `period` | The month the figure describes, given as its first day, e.g. `2026-11-01` |
+| `source` | Where the figure came from, e.g. `feed_quality`, `activity_coverage`, `summary` |
+| `field` | The field within that source, e.g. `completeness_location`, `labelled_percentage` |
+| `value` | The figure. Counts and rates share the column |
+| `denominator` | What `value` is out of, for a rate or a volume-weighted mean. Null for a plain count |
+| `snapshot_date` | The `meta.snapshot_date` of the response the figure was read from |
+| `captured_at` | When the row was written, UTC. Set by BigQuery, never by the caller |
+
+### `GET /admin/metric-snapshots`
+
+Paged list, newest period first. Query params: `source`, `field`, `from`, `to`, `page`, `page_size`.
+
+Every filter is optional, and **omitting one means every value, not none**. `source` and `field`
+accept repeated (`?source=a&source=b`) or comma-separated (`?source=a,b`) values; values within one
+filter are OR'd and different filters are AND'd, as elsewhere on this surface. `from` and `to` are
+inclusive and compare against `period`.
+
+### `POST /admin/metric-snapshots`
+
+Capture measurements. The body is a **flat array** of rows, which may mix periods and sources:
+
+```json
+[
+  { "period": "2026-11-01", "source": "feed_quality", "field": "completeness_location",
+    "value": 88.4, "denominator": 242, "snapshot_date": "2026-11-25" },
+  { "period": "2026-11-01", "source": "summary", "field": "feeds", "value": 446 }
+]
+```
+
+Returns `201` with the written rows in `{ data, meta }`, read back from BigQuery so the response
+carries the real `captured_at`. The whole batch goes in one `INSERT`, so capturing every field for a
+month costs one statement.
+
+A measurement may be captured **once**. The batch is refused in full, and nothing is written, when:
+
+| Status | Cause |
+|---|---|
+| `400` | the array is empty, a `source` or `field` is blank, or the same `(period, source, field)` appears twice in the batch |
+| `409` | any `(period, source, field)` in the batch has already been captured |
+
+Both name the offending measurements, which makes a retried capture safe rather than a source of
+duplicates. The table carries no uniqueness constraint, so this check is the only thing holding the
+series to one row per measure per month. The check and the insert are two statements, so two captures
+of the same period running at once could still both land; the monthly job is the only writer and runs
+alone.
+
+`captured_at` is set by BigQuery and ignored if supplied.
+
+There is **no delete or update route**. Correcting a bad capture means going to the table directly.
+
 ## Source data
 
 Everything below describes the BigQuery-backed endpoints. The two

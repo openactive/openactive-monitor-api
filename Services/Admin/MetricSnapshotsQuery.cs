@@ -18,12 +18,18 @@ internal static class MetricSnapshotsQuery
 	/// Read the series, narrowed by any combination of source, field and period range. An empty array
 	/// parameter means "no filter on this column" rather than "match nothing".
 	/// </summary>
+	/// <remarks>
+	/// The array lengths are wrapped in <c>COALESCE</c> because an empty list reaches BigQuery as a NULL
+	/// array, and <c>ARRAY_LENGTH(NULL)</c> is NULL rather than zero. Without it an omitted filter makes
+	/// its own clause NULL, which takes the whole <c>WHERE</c> with it and returns no rows at all --
+	/// omitting a filter would quietly mean "match nothing" instead of "match everything".
+	/// </remarks>
 	public static string ListSql(string table) =>
 		$"""
 		SELECT {Columns}
 		FROM {table}
-		WHERE (ARRAY_LENGTH(@sources) = 0 OR source IN UNNEST(@sources))
-		  AND (ARRAY_LENGTH(@fields) = 0 OR field IN UNNEST(@fields))
+		WHERE (COALESCE(ARRAY_LENGTH(@sources), 0) = 0 OR source IN UNNEST(@sources))
+		  AND (COALESCE(ARRAY_LENGTH(@fields), 0) = 0 OR field IN UNNEST(@fields))
 		  AND (@from IS NULL OR period >= @from)
 		  AND (@to IS NULL OR period <= @to)
 		ORDER BY period DESC, source, field
