@@ -68,7 +68,14 @@ def get_all(base: str, path: str, token: str, page_size: int = 1000, **params) -
 
 
 def capture(base: str, token: str, rows: list) -> int:
-    """POST a batch of measurements. Returns a process exit code and reports any refusal."""
+    """
+    POST a batch of measurements. Returns a process exit code.
+
+    A batch whose measurements have **all** already been captured is not a failure: it is what a
+    retry looks like once the capture has succeeded, and the schedule runs several days running so
+    a delayed or skipped run still lands. A batch where only some clash is a real problem -- the
+    endpoint refuses in full, so the rest went unwritten and need attention.
+    """
     url = f"{base}{SNAPSHOTS_PATH}?{urllib.parse.urlencode({'token': token})}"
     request = urllib.request.Request(
         url,
@@ -84,7 +91,13 @@ def capture(base: str, token: str, rows: list) -> int:
             return 0
     except urllib.error.HTTPError as error:
         body = json.loads(error.read() or b"{}")
+        clashes = body.get("measurements", [])
+
+        if error.code == 409 and len(clashes) == len(rows):
+            print(f"\nAlready captured: all {len(rows)} measurements are present. Nothing to do.")
+            return 0
+
         print(f"\nRefused ({error.code}): {body.get('message', body)}", file=sys.stderr)
-        for measurement in body.get("measurements", []):
+        for measurement in clashes:
             print(f"  {measurement}", file=sys.stderr)
         return 1

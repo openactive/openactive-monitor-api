@@ -2066,12 +2066,32 @@ measurement is captured through the same checks any other caller gets.
 | Script | When |
 |---|---|
 | `backfill_datasets_crawled.py` | Once. Recovers the monthly crawl figure from `feed_ingestion` |
-| `capture_month.py` | On the 1st, for the month just ended |
+| `capture_month.py` | Monthly, for the month just ended. Scheduled — see below |
 
 ```bash
 python3 scripts/capture_month.py --dry-run
 python3 scripts/capture_month.py
 ```
+
+#### The schedule
+
+`.github/workflows/capture-metrics.yml` runs `capture_month.py` against the deployed API, so the
+capture does not depend on anyone remembering it. Two repository secrets, `MONITOR_ADMIN_TOKEN` and
+`MONITOR_ACCESS_TOKEN`, carry the two tokens; nothing else is configured.
+
+It runs at **08:00 UTC on the 1st to the 5th** of each month. Five days rather than one because
+GitHub can delay or drop a scheduled run, and a month that is never captured cannot be recovered
+afterwards. A day on which every measurement is already present exits cleanly, so the later days
+cost nothing and exist purely as retries. **08:00 and not earlier** because every admin response is
+output-cached until 07:00 UTC; a capture before then would record the previous day's figures.
+
+A batch where only *some* measurements already exist fails the run instead. The endpoint refuses a
+batch in full, so the rest went unwritten and the month is still incomplete — the one case that
+needs a person to look.
+
+`workflow_dispatch` runs it by hand, taking an optional `period` for a month that was missed and a
+`dry_run` that writes nothing.
+
 
 `capture_month.py` reads `/admin/feed-quality`, `/admin/activity-coverage/summary`,
 `/admin/summary`, `/admin/ecosystem-growth-trend` and the analytics `/summary`, and so needs **both**
