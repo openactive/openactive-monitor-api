@@ -1865,6 +1865,126 @@ The default page size is 10, so a plain call returns the top 10. Later pages con
 - Activities only. Facility bookings, unmatched free text and unlabelled opportunities are not
   ranked, as on the map.
 
+## GitHub stewardship
+
+How quickly stewards respond to the community on GitHub. Two tables: dataset addition requests on the
+data catalog, and community issues on the OpenActive tooling repositories.
+
+**These endpoints read the GitHub REST API, not BigQuery.** Everything is configured in the `GitHub`
+section:
+
+| Key | Where | Meaning |
+|---|---|---|
+| `CatalogRepository` | `appsettings.json` | Repository dataset addition requests are raised on. Default `openactive/data-catalogs` |
+| `ToolingRepositories` | `appsettings.json` | Tooling repositories whose issues are tracked, each `owner/name` |
+| `LookbackDays` | `appsettings.json` | How far back an item may have been opened. Default `365` |
+| `TimeoutSeconds` | `appsettings.json` | Per-request timeout. Default `30` |
+| `Stewards` | **secret** | `[{ "Login": "...", "Name": "..." }]`. Who counts as a steward, and the name shown for them |
+
+The steward list is never committed. Supply it as follows:
+
+- **Locally:** in the gitignored `appsettings.Development.json`.
+- **On App Service:** as application settings `GitHub__Stewards__0__Login`, `GitHub__Stewards__0__Name`,
+  `GitHub__Stewards__1__Login`, …. Use the indexed form: Linux setting names cannot
+  hold the hyphens many logins contain.
+- **In CI:** from the `GH_STEWARDS_JSON` repository secret.
+
+Logins are matched ignoring case.
+
+Rules shared by both endpoints:
+
+- **Stewards and bots are not the community.** Items opened by a listed steward, or by an account
+  GitHub marks as a bot, are left out.
+- **One year back.** Only items opened in the last `LookbackDays` are listed.
+- **Stewards are optional.** The list is empty by default and both endpoints still answer. Until it is
+  filled in, every author counts as community, `first_contact_at` is always `null`, `stewards` is
+  empty and assignees are shown by login.
+- **Upstream failures.** When GitHub is unreachable or rate-limits the API, both answer **`502`**
+  `{ "message": "GitHub is currently unavailable: …" }`.
+- **Caching.** GitHub is read at most once a day. The answer is held until the 07:00 UTC refresh, like
+  every admin response, and a failure is not cached.
+- **Not monitors.** There is no `as_of`, no trend endpoint and no tile on `/admin/summary`.
+  `meta.snapshot_date` is the UTC date GitHub was read.
+
+### `GET /admin/catalog-requests`
+
+Pull requests on the catalog repository, newest first, with a `summary` over every row the filter
+matched.
+
+| Param | Default | Meaning |
+|---|---|---|
+| `page`, `page_size` | `1`, `500` | As on every admin list |
+| `status` | all | `open`, `closed`, `merged`. Repeated or comma-separated, ignoring case |
+
+- **`status`** is `merged` when the PR was merged, `closed` when it was closed without merging, and
+  `open` otherwise.
+- **`first_contact_at`** is the earliest comment, review or inline review comment by a steward.
+  Assigning a steward, requesting their review or closing without a word is not contact.
+- **`completed_at`** is the merge time, or else the close time. It is `null` while open.
+- **`stewards`** lists, by display name, the stewards who commented, reviewed, were assigned or were
+  asked to review. Who pressed merge is not recorded.
+- **`*_hours`** are measured from `created_at`, to one decimal place.
+- **Summary medians** skip rows that have no value yet. `open + merged + closed = total`.
+
+```json
+{
+  "data": [
+    {
+      "number": 56,
+      "title": "Add FitTrybe dataset site",
+      "url": "https://github.com/openactive/data-catalogs/pull/56",
+      "author_login": "franschezco",
+      "created_at": "2026-08-17T00:00:54Z",
+      "status": "open",
+      "stewards": ["A Steward"],
+      "first_contact_at": "2026-08-18T13:52:34Z",
+      "first_contact_hours": 37.9,
+      "completed_at": null,
+      "completion_hours": null
+    }
+  ],
+  "summary": {
+    "total": 4, "open": 2, "merged": 1, "closed": 1, "awaiting_first_contact": 0,
+    "median_first_contact_hours": 45.7, "median_merge_hours": 356.4, "median_close_hours": 0.4
+  },
+  "meta": { "snapshot_date": "2026-11-24", "generated_at": "2026-11-24T10:29:41Z", "page": 1, "page_size": 500, "total": 4 }
+}
+```
+
+### `GET /admin/tooling-issues`
+
+Issues (never pull requests) opened by the community on the tooling repositories, newest first.
+
+| Param | Default | Meaning |
+|---|---|---|
+| `page`, `page_size` | `1`, `500` | As on every admin list |
+| `repo` | all | `owner/name` or just `name`. Repeated or comma-separated, ignoring case |
+| `status` | all | `open`, `closed` |
+
+- **`assignees`** shows a steward by display name and anyone else by GitHub login.
+- **`closed_at`** is `null` while open.
+- **An empty `data` is a real answer.** These repositories had no community issues in the year to
+  2026-11-24.
+
+```json
+{
+  "data": [
+    {
+      "repo": "openactive/rpde-validator",
+      "number": 42,
+      "title": "Validator rejects a valid next URL",
+      "url": "https://github.com/openactive/rpde-validator/issues/42",
+      "author_login": "someone",
+      "created_at": "2026-09-01T10:00:00Z",
+      "status": "closed",
+      "assignees": ["A Steward"],
+      "closed_at": "2026-09-03T16:20:00Z"
+    }
+  ],
+  "meta": { "snapshot_date": "2026-11-24", "generated_at": "2026-11-24T10:29:45Z", "page": 1, "page_size": 500, "total": 1 }
+}
+```
+
 ## Source data
 
 Everything below describes the BigQuery-backed endpoints. The two
@@ -1987,7 +2107,14 @@ dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~ActivePlacesCoverageReaderTests"
 dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
   --filter "FullyQualifiedName~ActivePlacesMappingFilterTests"
+
+# the GitHub parser and stewardship rules — pure, no network
+dotnet test MonitorApi.Admin.Tests/MonitorApi.Admin.Tests.csproj \
+  --filter "FullyQualifiedName~GitHubParserTests|FullyQualifiedName~CatalogRequestsTests|FullyQualifiedName~ToolingIssuesTests"
 ```
+
+`GitHubEndpointTests` read GitHub itself, anonymously, at 60 requests an hour per IP. A full run uses
+about 40 of them, so a second run within the hour may fail with `502`.
 
 The Active Places endpoint tests need the admin token and network access to wherever the `ActivePlaces`
 section points, but no BigQuery credentials — they read no table.

@@ -39,6 +39,8 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `GET /admin/activity-coverage`: future opportunities per local authority district per OpenActive activity-list concept, for the coverage map; published labels are matched to the vocabulary with a tunable similarity threshold (optional activity/district/region/country/min_similarity)
 - `GET /admin/activity-coverage/summary`: national activity headline figures — future activity opportunities, % with an activity label, % linked to the activity list, activity-list concepts on offer (optional min_similarity)
 - `GET /admin/activity-coverage/top-activities`: activity-list concepts ranked nationally by future opportunities; top 10 by default (optional min_similarity)
+- `GET /admin/catalog-requests`: dataset addition requests (community pull requests on `openactive/data-catalogs`) over the last year, with steward first-contact and completion times, plus a summary (optional status filter)
+- `GET /admin/tooling-issues`: community issues on the OpenActive tooling repositories over the last year, with assignee and close time (optional repo/status filters)
 - `POST /admin/publisher-notifications`: create a row
 - `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
 - `DELETE /admin/publisher-notifications/{id}`: delete a row

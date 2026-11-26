@@ -37,6 +37,21 @@ builder.Services
 builder.Services.AddHttpClient(ActivityVocabularySource.HttpClientName);
 builder.Services.AddSingleton<ActivityVocabularySource>();
 
+builder.Services
+	.AddOptions<GitHubOptions>()
+	.BindConfiguration(GitHubOptions.SectionName);
+
+// /admin/catalog-requests and /admin/tooling-issues read the GitHub REST API. A singleton for the same
+// reasons as the sources above, and to stay well inside GitHub's rate limit: one copy per day.
+builder.Services.AddHttpClient(GitHubSource.HttpClientName, client =>
+{
+	client.BaseAddress = GitHubSource.ApiRoot;
+	client.DefaultRequestHeaders.UserAgent.ParseAdd("openactive-monitor-api");
+	client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+	client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
+builder.Services.AddSingleton<GitHubSource>();
+
 builder.Services.AddOutputCache(options =>
 {
 	options.SizeLimit = 100 * 1024 * 1024;       

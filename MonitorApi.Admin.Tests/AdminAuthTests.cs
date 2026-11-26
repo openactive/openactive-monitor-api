@@ -32,6 +32,8 @@ public class AdminAuthTests(AdminApiFixture fixture) : IClassFixture<AdminApiFix
 		"/admin/activity-coverage",
 		"/admin/activity-coverage/summary",
 		"/admin/activity-coverage/top-activities",
+		"/admin/catalog-requests",
+		"/admin/tooling-issues",
 	];
 
 	[Theory]
