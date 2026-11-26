@@ -12,4 +12,5 @@ internal static class Tables
 	public const string FeedIngestion = "feed_ingestion";
 	public const string CustomProperties = "custom_properties";
 	public const string PublisherNotifications = "publisher_notifications";
+	public const string MetricSnapshots = "metric_snapshots";
 }
