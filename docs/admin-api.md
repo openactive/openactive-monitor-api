@@ -2057,6 +2057,41 @@ alone.
 
 There is **no delete or update route**. Correcting a bad capture means going to the table directly.
 
+### Capturing the series
+
+Two scripts in `scripts/`, both of which take `--dry-run` and print every measurement before
+writing anything. Run the API first; they talk to it over HTTP rather than to BigQuery, so a
+measurement is captured through the same checks any other caller gets.
+
+| Script | When |
+|---|---|
+| `backfill_datasets_crawled.py` | Once. Recovers the monthly crawl figure from `feed_ingestion` |
+| `capture_month.py` | On the 1st, for the month just ended |
+
+```bash
+python3 scripts/capture_month.py --dry-run
+python3 scripts/capture_month.py
+```
+
+`capture_month.py` reads `/admin/feed-quality`, `/admin/activity-coverage/summary`,
+`/admin/summary`, `/admin/ecosystem-growth-trend` and the analytics `/summary`, and so needs **both**
+tokens — `Api:AdminToken` and `Api:AccessToken`. Both come from `MONITOR_ADMIN_TOKEN` /
+`MONITOR_ACCESS_TOKEN`, falling back to `appsettings.Development.json`. Neither is ever printed.
+
+It stores **source fields, not finished measures**. Nothing in the table is called "KPI4"; the
+report computes that from the nine completeness rows when it runs. Two consequences worth knowing:
+
+- Completeness is stored **twice**, `_weighted` and `_unweighted`. The summary's averages are
+  unweighted, while the measurement asks for a figure adjusted by volume of feed, so the weighted
+  one is computed from the per-feed rows. Which a measure means is unsettled; keeping one would
+  decide it by accident.
+- The three monitor counts behind the critical-error measure are stored **one per monitor**, not
+  summed, so the measure can be redefined without losing the periods already captured.
+
+A month still in progress keeps its `datasets_crawled` out of the capture: that figure is an
+aggregate over the month rather than a reading taken on a day, and it changes until the month ends.
+Everything else is a point-in-time reading, dated by the `snapshot_date` stored beside it.
+
 ## Source data
 
 Everything below describes the BigQuery-backed endpoints. The two
