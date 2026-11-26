@@ -2076,8 +2076,10 @@ python3 scripts/capture_month.py
 #### The schedule
 
 `.github/workflows/capture-metrics.yml` runs `capture_month.py` against the deployed API, so the
-capture does not depend on anyone remembering it. Two repository secrets, `MONITOR_ADMIN_TOKEN` and
-`MONITOR_ACCESS_TOKEN`, carry the two tokens; nothing else is configured.
+capture does not depend on anyone remembering it. It reads the two tokens from the repository
+secrets the test suite already uses, `API_ADMIN_TOKEN` and `API_ACCESS_TOKEN`, and passes them to the
+script as `MONITOR_ADMIN_TOKEN` and `MONITOR_ACCESS_TOKEN`, the environment variables it reads
+locally. Nothing else is configured.
 
 It runs at **08:00 UTC on the 1st to the 5th** of each month. Five days rather than one because
 GitHub can delay or drop a scheduled run, and a month that is never captured cannot be recovered

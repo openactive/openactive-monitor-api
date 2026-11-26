@@ -49,8 +49,8 @@ jobs:
         env:
           # Both surfaces are read: the admin one for most of it, the analytics one for the
           # facility count. The tokens are not interchangeable.
-          MONITOR_ADMIN_TOKEN: ${{ secrets.MONITOR_ADMIN_TOKEN }}
-          MONITOR_ACCESS_TOKEN: ${{ secrets.MONITOR_ACCESS_TOKEN }}
+          MONITOR_ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}
+          MONITOR_ACCESS_TOKEN: ${{ secrets.API_ACCESS_TOKEN }}
           # Passed through the environment rather than interpolated into the command, so a
           # manually entered period cannot become part of the shell line.
           PERIOD: ${{ inputs.period }}
