@@ -30,6 +30,7 @@ here doesn't match an error BigQuery gives you, the live table is right: regener
 | [`insight_run_summary`](#insight_run_summary) | 231 | 0.1 MB | one row per insight run | `InsightRunSummary` |
 | [`insight_sport_discipline`](#insight_sport_discipline) | 297,820 | 18 MB | one row per (run_date, sport_and_discipline, activity) | — |
 | [`insight_sport_discipline_master`](#insight_sport_discipline_master) | 67,452 | 3.3 MB | one row per (run_date, sport/discipline) | — |
+| [`metric_snapshots`](#metric_snapshots) | 0 | <0.1 MB | one row per (period, source, field), written by this API | `MetricSnapshots` |
 | [`opportunities`](#opportunities) | 9,693,480 | **15.1 GB** | one row per opportunity item, current state only | `Opportunities` |
 | [`opportunity_ingestion`](#opportunity_ingestion) | 41,622 | 10 MB | one row per (ingestion_date, feed) crawl | `OpportunityIngestion` |
 | [`opportunity_ingestion_backup_20260815`](#opportunity_ingestion_backup_20260815) | 46,727 | 9.3 MB | frozen backup, not updated | — |
@@ -48,6 +49,7 @@ Row counts are from the snapshot date and change every day. Never assert on them
 | `feed_quality` | `Controllers/ApiController.cs`, `Controllers/Admin/DataQualityController.cs`, `Controllers/Admin/MonitorControllerBase.cs` |
 | `feeds` | `Controllers/ApiController.cs`, `Controllers/Admin/DataQualityController.cs`, `Controllers/Admin/MonitorControllerBase.cs` |
 | `insight_run_summary` | `Controllers/ApiController.cs` |
+| `metric_snapshots` | `Controllers/Admin/MetricSnapshotsController.cs` (reads and writes) |
 | `opportunities` | `Controllers/ApiController.cs`, `Controllers/Admin/MonitorControllerBase.cs` |
 | `opportunity_ingestion` | `Controllers/Admin/EcosystemGrowthController.cs`, `Controllers/Admin/SummaryController.cs`, `Controllers/Admin/MonitorControllerBase.cs` |
 | `publisher_notifications` | `Controllers/Admin/PublisherNotificationsController.cs` |
@@ -304,6 +306,29 @@ The full sport-and-discipline list for each run, with whether any feed matched e
 | `discipline` | STRING | YES | |
 | `sport_and_discipline` | STRING | YES | |
 | `is_matched_by_any_feed` | BOOL | **NO** | |
+
+## metric_snapshots
+
+The metric snapshot store: one row per (period, source, field), holding the raw figures the monthly
+KPI report is computed from. The only table in this dataset written by this API rather than by an
+upstream pipeline. Clustered by `source`, `field`; not partitioned.
+
+It deliberately stores **source fields, not computed measures.** A KPI whose definition is still
+being settled (KPI4's property set, KPI7's labelled-vs-linked) can then be recomputed for every past
+period from rows already captured, which storing the finished percentage would make impossible.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `period` | DATE | **NO** | The month the figure describes, as its first day, e.g. `2026-11-01` |
+| `source` | STRING | **NO** | cluster 1. Where the figure came from, e.g. `feed_quality`, `activity_coverage`, `summary` |
+| `field` | STRING | **NO** | cluster 2. The field within that source, e.g. `completeness_location`, `labelled_percentage` |
+| `value` | FLOAT64 | YES | The figure. Counts are whole numbers held as FLOAT64, so one column carries both |
+| `denominator` | FLOAT64 | YES | What `value` is out of, where it is a rate or a weighted mean, e.g. `feeds_reporting` |
+| `snapshot_date` | DATE | YES | The `meta.snapshot_date` of the response the figure was read from |
+| `captured_at` | TIMESTAMP | **NO** | When the row was written, UTC. Set by BigQuery, never by the caller |
+
+There is no uniqueness constraint. `POST /admin/metric-snapshots` refuses a `(period, source, field)`
+already present, which is the only thing keeping the series to one row per measure per month.
 
 ## opportunities
 

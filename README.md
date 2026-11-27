@@ -44,6 +44,8 @@ A separate `/admin` surface serves the admin dashboard, authenticated with its o
 - `POST /admin/publisher-notifications`: create a row
 - `PATCH /admin/publisher-notifications/{id}`: update a row (writable fields; UI chooses which)
 - `DELETE /admin/publisher-notifications/{id}`: delete a row
+- `GET /admin/metric-snapshots`: the month-by-month metric series the KPI report is built from (optional source/field/period filters; not cached)
+- `POST /admin/metric-snapshots`: capture a batch of measurements; a measurement may be captured once
 
 See [docs/admin-api.md](docs/admin-api.md). The analytics token and the admin token are not
 interchangeable in either direction.

@@ -48,6 +48,7 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 		Assert.Contains("/admin/activity-coverage/top-activities", paths);
 		Assert.Contains("/admin/catalog-requests", paths);
 		Assert.Contains("/admin/tooling-issues", paths);
+		Assert.Contains("/admin/metric-snapshots", paths);
 		Assert.All(paths, path => Assert.StartsWith("/admin/", path));
 	}
 
@@ -74,6 +75,9 @@ public class AdminApiReferenceTests(AdminApiFixture fixture) : IClassFixture<Adm
 	[InlineData("/admin/catalog-requests", "page,page_size,status")]
 	[InlineData("/admin/tooling-issues", "page,page_size,repo,status")]
 	[InlineData("/admin/publisher-notifications", "page,page_size")]
+	// The only endpoint whose rows are a history rather than current state, so it is also the only
+	// one with a period window instead of an as_of.
+	[InlineData("/admin/metric-snapshots", "source,field,from,to,page,page_size")]
 	// Current state only, so no as_of: paging, the activity and location filters, and the match threshold.
 	[InlineData("/admin/activity-coverage", "page,page_size,activity,district,region,country,min_similarity")]
 	[InlineData("/admin/activity-coverage/summary", "min_similarity")]

@@ -11,6 +11,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The admin test suite cleans up the rows it writes to metric_snapshots itself, which needs
+         Tables and the BigQuery credential. Nothing else internal is intended for test use. -->
+    <InternalsVisibleTo Include="MonitorApi.Admin.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Google.Cloud.BigQuery.V2" Version="3.11.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.14.14" />
