@@ -2059,60 +2059,32 @@ There is **no delete or update route**. Correcting a bad capture means going to 
 
 ### Capturing the series
 
-Two scripts in `scripts/`, both of which take `--dry-run` and print every measurement before
-writing anything. Run the API first; they talk to it over HTTP rather than to BigQuery, so a
-measurement is captured through the same checks any other caller gets.
+The capture runs from **`openactive-admin-dashboard`**, beside the other scheduled jobs that write
+to this surface — `publisher-notifications` is the same shape. This repository owns the endpoint and
+the table; it does not own the job that fills them.
 
-| Script | When |
-|---|---|
-| `backfill_datasets_crawled.py` | Once. Recovers the monthly crawl figure from `feed_ingestion` |
-| `capture_month.py` | Monthly, for the month just ended. Scheduled — see below |
+What a capture stores is a contract the report depends on, so it is recorded here rather than only
+in the job:
 
-```bash
-python3 scripts/capture_month.py --dry-run
-python3 scripts/capture_month.py
-```
+- Rows are **source fields, not finished measures.** Nothing in the table is called "KPI4"; the
+  report computes that from the nine completeness rows when it runs. A measure whose definition
+  changes can then be recomputed for every period already captured.
+- Completeness is stored **twice**, `_weighted` and `_unweighted`. `/admin/feed-quality` reports
+  unweighted averages in its summary, while the measurement asks for a figure adjusted by volume of
+  feed — and that one has to be computed from the per-feed `num_future_opportunity_items`. Which of
+  the two a measure means is unsettled, and keeping only one would decide it by accident.
+- The three monitor counts behind the critical-error measure are stored **one per monitor** rather
+  than summed, so it can be redefined without losing the periods already captured.
+- A month still in progress keeps its `datasets_crawled` out of the capture. That figure is an
+  aggregate over the month rather than a reading taken on one day, and it changes until the month
+  ends. Everything else is a point-in-time reading, dated by the `snapshot_date` stored beside it.
 
-#### The schedule
+A capture reads `/admin/feed-quality`, `/admin/activity-coverage/summary`, `/admin/summary` and
+`/admin/ecosystem-growth-trend` here, and `number_of_facilities` from the analytics `/summary`, so
+it needs **both** tokens. They are not interchangeable.
 
-`.github/workflows/capture-metrics.yml` runs `capture_month.py` against the deployed API, so the
-capture does not depend on anyone remembering it. It reads the two tokens from the repository
-secrets the test suite already uses, `API_ADMIN_TOKEN` and `API_ACCESS_TOKEN`, and passes them to the
-script as `MONITOR_ADMIN_TOKEN` and `MONITOR_ACCESS_TOKEN`, the environment variables it reads
-locally. Nothing else is configured.
-
-It runs at **08:00 UTC on the 1st to the 5th** of each month. Five days rather than one because
-GitHub can delay or drop a scheduled run, and a month that is never captured cannot be recovered
-afterwards. A day on which every measurement is already present exits cleanly, so the later days
-cost nothing and exist purely as retries. **08:00 and not earlier** because every admin response is
-output-cached until 07:00 UTC; a capture before then would record the previous day's figures.
-
-A batch where only *some* measurements already exist fails the run instead. The endpoint refuses a
-batch in full, so the rest went unwritten and the month is still incomplete — the one case that
-needs a person to look.
-
-`workflow_dispatch` runs it by hand, taking an optional `period` for a month that was missed and a
-`dry_run` that writes nothing.
-
-
-`capture_month.py` reads `/admin/feed-quality`, `/admin/activity-coverage/summary`,
-`/admin/summary`, `/admin/ecosystem-growth-trend` and the analytics `/summary`, and so needs **both**
-tokens — `Api:AdminToken` and `Api:AccessToken`. Both come from `MONITOR_ADMIN_TOKEN` /
-`MONITOR_ACCESS_TOKEN`, falling back to `appsettings.Development.json`. Neither is ever printed.
-
-It stores **source fields, not finished measures**. Nothing in the table is called "KPI4"; the
-report computes that from the nine completeness rows when it runs. Two consequences worth knowing:
-
-- Completeness is stored **twice**, `_weighted` and `_unweighted`. The summary's averages are
-  unweighted, while the measurement asks for a figure adjusted by volume of feed, so the weighted
-  one is computed from the per-feed rows. Which a measure means is unsettled; keeping one would
-  decide it by accident.
-- The three monitor counts behind the critical-error measure are stored **one per monitor**, not
-  summed, so the measure can be redefined without losing the periods already captured.
-
-A month still in progress keeps its `datasets_crawled` out of the capture: that figure is an
-aggregate over the month rather than a reading taken on a day, and it changes until the month ends.
-Everything else is a point-in-time reading, dated by the `snapshot_date` stored beside it.
+Run it **after 07:00 UTC**: every admin response is output-cached until then, so an earlier capture
+records the previous day's figures.
 
 ## Source data
 
